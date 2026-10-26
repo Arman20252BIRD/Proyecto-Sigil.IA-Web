@@ -2,31 +2,36 @@
 
 ## Objetivo
 
-Landing page pública de Sigil.IA. Su función es explicar la plataforma de seguridad para flotas a clientes corporativos y dirigirlos hacia el portal de acceso.
+Landing pública de Sigil.IA basada en el HTML de referencia entregado para el portal de monitoreo vehicular inteligente. Explica la arquitectura a clientes corporativos y dirige al acceso de la plataforma.
 
-## Estructura
+## Estructura implementada
 
-- `page.tsx`: composición de la página, navegación, hero, arquitectura, funciones y footer.
-- `page.module.css`: estilos encapsulados, paleta clara, visualización de radar y comportamiento responsive.
+- `page.tsx`: página Server Component con navegación, hero, diagrama SVG del vehículo, proyecto, funcionamiento, funciones, contacto y footer.
+- `page.module.css`: estilos locales en CSS Modules, paleta azul/cian, grilla técnica, tarjetas y responsive móvil.
 
-## Secciones implementadas
+## Secciones
 
-1. **Navegación superior**: enlaces de anclaje a `#proyecto`, `#como-funciona` y `#funciones`.
-2. **Acciones de acceso**: `Iniciar sesión` enlaza a `/login`; `Acceso corporativo` enlaza a `/login?tipo=corporativo`.
-3. **Hero**: presenta el procesamiento en el borde, la inteligencia artificial y AWS.
-4. **Arquitectura**: explica el flujo de captura local con ESP32, inferencia inteligente y visibilidad en AWS.
-5. **Funciones**: resume alertas en tiempo real, protección de datos y escalabilidad.
+1. **Navegación superior**: anclas a `#proyecto`, `#como-funciona` y `#funciones`, más accesos a `/login`.
+2. **Hero**: mensaje “Más claridad para cuidar lo que te mueve”, botones de acción, nota técnica y diagrama conceptual con ESP32, MPU-6050 y GPS.
+3. **El proyecto**: tres pilares: microcontrolador ESP32, inferencia inteligente y Broker MQTT/Cloud AWS.
+4. **Cómo funciona**: cuatro etapas: detección, análisis, comunicación/almacenamiento y consulta/notificaciones.
+5. **Funciones**: monitoreo de eventos, alertas, ubicación, historial, estado del vehículo y validación biométrica MFA.
+6. **Contacto corporativo**: llamada a pruebas de concepto institucionales.
 
-## Criterios técnicos
+## Decisiones técnicas
 
-- La ruta sigue las convenciones del App Router de Next.js 16.
-- Es un Server Component porque no requiere estado ni eventos de navegador.
-- Los iconos son SVG inline para evitar una dependencia adicional.
-- El layout se adapta a móvil mediante un breakpoint en `800px`.
-- La ruta raíz redirige a `/informativo` desde `app/page.tsx`.
+- El Tailwind por CDN del HTML de referencia fue convertido a CSS local para evitar dependencias de red en Next.js.
+- El diagrama del vehículo se implementó como SVG inline, sin imágenes externas.
+- La animación de escaneo se implementó con `@keyframes` local.
+- Los iconos se mantienen como SVG inline para no agregar una librería.
+- La ruta `/` y `/informativo` muestran el mismo portal.
+- Los enlaces `/login` y `/login?tipo=corporativo` quedan preparados para la siguiente etapa de autenticación.
 
-## Próximos pasos
+## Validación
 
-- Crear las rutas `/login` y `/crear-cuenta`.
-- Reemplazar los enlaces de acceso por el flujo real de autenticación.
-- Añadir recursos de marca definitivos si se proporcionan (logotipo, tipografías o imágenes).
+Ejecutar desde la raíz:
+
+```bash
+npm run lint
+npm run build
+```

@@ -23,7 +23,8 @@ Landing page pública de Sigil.IA. Su función es explicar la plataforma de segu
 - Es un Server Component porque no requiere estado ni eventos de navegador.
 - Los iconos son SVG inline para evitar una dependencia adicional.
 - El layout se adapta a móvil mediante un breakpoint en `800px`.
-- La ruta raíz redirige a `/informativo` desde `app/page.tsx`.
+- La ruta raíz renderiza el mismo portal directamente desde `app/page.tsx`, evitando una redirección innecesaria durante el prerender de Next.js 16.
+- `next.config.ts` permite el origen de desarrollo `192.168.1.66` para que HMR funcione al abrir la app desde otro dispositivo de la red local.
 
 ## Próximos pasos
 

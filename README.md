@@ -6,7 +6,7 @@ El frontend está organizado dentro de `app` usando el App Router de Next.js.
 
 ### Portal informativo
 
-La landing pública está disponible en `/informativo` y también es la ruta inicial (`/`). Se encuentra en `app/informativo` y presenta:
+La landing pública está disponible en `/informativo` y también es la ruta inicial (`/`). Ambas rutas renderizan el mismo portal directamente, sin redirección. Se encuentra en `app/informativo` y presenta:
 
 - Navegación superior con anclas a proyecto, funcionamiento y funciones.
 - Accesos preparados para iniciar sesión y entrar al portal corporativo.

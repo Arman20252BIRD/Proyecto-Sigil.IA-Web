@@ -8,4 +8,4 @@ descargar las dependecias con npm install
 ## paso 3:
 luego ejecutas con npm run dev.
 
-hola mundo
+hola universo

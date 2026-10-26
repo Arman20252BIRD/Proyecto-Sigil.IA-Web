@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
+import Image from "next/image";
 import Link from "next/link";
 import styles from "./page.module.css";
+import SensorDemo from "./sensor-demo";
 
 export const metadata: Metadata = {
   title: "Sigil.IA | Monitoreo vehicular inteligente",
@@ -41,15 +43,16 @@ export default function InformativoPage() {
   return (
     <main className={styles.page}>
       <header className={styles.header}><div className={styles.headerInner}>
-        <Link className={styles.brand} href="#hero"><span className={styles.brandIcon}><Icon name="security" /></span>Sigil<span className={styles.brandDot}>.</span>IA</Link>
+        <Link className={styles.brand} href="#hero" aria-label="Sigil.IA inicio"><Image className={styles.headerLogo} src="/sigil-logo.png" alt="Sigil.IA - Ciberseguridad y telemetría vehicular" width={260} height={160} priority /></Link>
         <nav className={styles.nav} aria-label="Navegación principal"><a href="#proyecto">El proyecto</a><a href="#como-funciona">Cómo funciona</a><a href="#funciones">Funciones</a></nav>
-        <div className={styles.actions}><Link className={styles.login} href="/login">Iniciar sesión</Link><Link className={styles.topButton} href="/login?tipo=corporativo">Acceso corporativo <Icon name="arrow" /></Link></div>
+        <div className={styles.actions}><Link className={styles.login} href="/login">Iniciar sesión</Link></div>
       </div></header>
 
       <section className={styles.hero} id="hero"><div className={styles.heroInner}>
         <div className={styles.heroCopy}><div className={styles.kicker}><span /> Monitoreo vehicular inteligente</div><h1>Más claridad para cuidar <span>lo que te mueve.</span></h1><p className={styles.lead}>Sigil.IA combina sensores, inteligencia artificial y conectividad para identificar posibles situaciones de riesgo y facilitar el monitoreo de los eventos de tu vehículo.</p><div className={styles.heroButtons}><a className={styles.primaryButton} href="#como-funciona">Conoce el sistema <Icon name="arrow" /></a><a className={styles.secondaryButton} href="#como-funciona"><Icon name="play" /> Cómo funciona</a></div><div className={styles.note}><span><Icon name="security" /></span><p>Una propuesta tecnológica en desarrollo para complementar la seguridad vehicular y telemetría de activos.</p></div></div>
         <div className={styles.diagramCard}><div className={styles.diagramHeader}><span><i /> Sistema conceptual</span><b>Telemetría nominal</b></div><div className={styles.blueprint}><div className={styles.scan} /><svg viewBox="0 0 460 220" role="img" aria-label="Diagrama conceptual de un vehículo conectado"><path className={styles.vehicleLine} d="M40 160h20c5-20 35-20 40 0h190c5-20 35-20 40 0h80c8 0 14-6 14-14l-4-21c-2-10-35-17-60-20l-55-45c-10-10-45-12-85-12h-90c-30 0-70 33-85 68l-15 15c-6 6-6 20 0 22Z" /><path className={styles.vehicleAccent} d="M140 60h70v50H105c10-25 23-42 35-50ZM225 60h65l50 50H225V60Z" /><circle className={styles.vehicleLine} cx="80" cy="160" r="22" /><circle className={styles.vehicleAccent} cx="80" cy="160" r="10" /><circle className={styles.vehicleLine} cx="310" cy="160" r="22" /><circle className={styles.vehicleAccent} cx="310" cy="160" r="10" /><circle className={styles.node} cx="160" cy="95" r="5" /><circle className={styles.node} cx="270" cy="120" r="4.5" /><circle className={styles.node} cx="360" cy="75" r="4.5" /><path className={styles.dashed} d="m160 95 110 25 90-45" /></svg><div className={styles.diagramLabels}><span><i /> ESP32 Core</span><span><i /> MPU-6050</span><span><i /> NEO-6M GPS</span></div></div><div className={styles.diagramFooter}><span><Icon name="radar" /> Sensoreado continuo</span><small>Ilustración conceptual · telemetría</small></div></div>
-      </div></section>
+        <SensorDemo /></div></section>
+      <section className={styles.interactiveSection} id="sensores"><div className={styles.interactiveIntro}><div className={styles.sectionNumber}>INTEGRACIÓN DE SENSORES</div><h2>De la señal física a una <span>decisión operativa.</span></h2><p>Explora cómo el sonido, el movimiento y el peso se integran en el vehículo, se procesan en el borde y llegan a la nube.</p></div><SensorDemo /></section>
 
       <section className={styles.section} id="proyecto"><div className={styles.sectionIntro}><div className={styles.sectionNumber}>01 / EL PROYECTO</div><h2>Tecnología que ayuda a entender lo que ocurre en ruta</h2><p>Una arquitectura edge-computing pensada para procesar micro-patrones de impacto, vibraciones acústicas anómalas y derivas de posición antes de enviar datos al servidor.</p></div><div className={styles.cardGrid}>{pillars.map(([icon, title, text, detail]) => <article className={styles.infoCard} key={title}><div className={styles.cardIcon}><Icon name={icon} /></div><h3>{title}</h3><p>{text}</p><div className={styles.cardDetail}><span>{detail}</span><Icon name="security" /></div></article>)}</div></section>
       <section className={`${styles.section} ${styles.processSection}`} id="como-funciona"><div className={styles.centerIntro}><div className={styles.sectionNumber}>02 / CÓMO FUNCIONA</div><h2>Del evento a la información, <span>paso a paso.</span></h2><p>Cuatro etapas describen cómo está planteado el sistema para transformar señales en contexto operativo.</p></div><div className={styles.stageGrid}>{stages.map((title, index) => <article className={styles.stage} key={title}><span className={styles.stageNumber}>0{index + 1}</span><div className={styles.stageLine} /><h3>{title}</h3><p>El sistema procesa la señal, conserva el contexto y entrega información útil para la operación.</p></article>)}</div></section>

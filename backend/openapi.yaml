@@ -1,0 +1,300 @@
+openapi: 3.1.0
+info:
+  title: Sigil.IA API
+  version: 1.0.0
+  description: Versioned HTTP contract between the Next.js frontend and backend.
+servers:
+  - url: /api/v1
+    description: Same-origin API exposed by the Next.js application.
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      summary: Check API availability
+      responses:
+        "200":
+          description: The web API is responding. This does not assert PostgreSQL readiness.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /auth/login:
+    post:
+      operationId: login
+      summary: Validate credentials and create an MFA challenge
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Credentials accepted; an MFA challenge was created. No session is active yet.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginChallenge"
+        "400":
+          $ref: "#/components/responses/ApiError"
+        "401":
+          $ref: "#/components/responses/ApiError"
+        "403":
+          $ref: "#/components/responses/ApiError"
+        "415":
+          $ref: "#/components/responses/ApiError"
+        "422":
+          $ref: "#/components/responses/ApiError"
+        "429":
+          $ref: "#/components/responses/ApiError"
+        "501":
+          $ref: "#/components/responses/ApiError"
+  /auth/register:
+    post:
+      operationId: register
+      summary: Validate registration details and create a pending enrollment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegistrationRequest"
+      responses:
+        "202":
+          description: Registration is pending enrollment; no active session is created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegistrationPending"
+        "400":
+          $ref: "#/components/responses/ApiError"
+        "409":
+          $ref: "#/components/responses/ApiError"
+        "403":
+          $ref: "#/components/responses/ApiError"
+        "415":
+          $ref: "#/components/responses/ApiError"
+        "422":
+          $ref: "#/components/responses/ApiError"
+        "429":
+          $ref: "#/components/responses/ApiError"
+        "501":
+          $ref: "#/components/responses/ApiError"
+  /auth/face:
+    post:
+      operationId: verifyFace
+      summary: Verify an MFA challenge and create a server session
+      description: Accepts a one-time assertion from a trusted biometric verifier, never a raw face image or an identifier alone.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FaceVerificationRequest"
+      responses:
+        "200":
+          description: MFA succeeded and a secure session cookie was issued.
+          headers:
+            Set-Cookie:
+              description: HttpOnly; Secure; SameSite=Lax session cookie with Path=/ and no Domain attribute.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthenticatedSession"
+        "401":
+          $ref: "#/components/responses/ApiError"
+        "403":
+          $ref: "#/components/responses/ApiError"
+        "415":
+          $ref: "#/components/responses/ApiError"
+        "422":
+          $ref: "#/components/responses/ApiError"
+        "429":
+          $ref: "#/components/responses/ApiError"
+        "501":
+          $ref: "#/components/responses/ApiError"
+  /auth/session:
+    get:
+      operationId: getSession
+      summary: Return the current authenticated session
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: The session is valid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthenticatedSession"
+        "401":
+          $ref: "#/components/responses/ApiError"
+        "501":
+          $ref: "#/components/responses/ApiError"
+  /auth/logout:
+    post:
+      operationId: logout
+      summary: Revoke the current session
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+      responses:
+        "204":
+          description: The session was revoked and its cookie expired.
+          headers:
+            Set-Cookie:
+              description: Expired session cookie with the same Path and security attributes as the issued cookie.
+              schema:
+                type: string
+        "501":
+          $ref: "#/components/responses/ApiError"
+        "403":
+          $ref: "#/components/responses/ApiError"
+        "415":
+          $ref: "#/components/responses/ApiError"
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: __Host-sigil_session
+  responses:
+    ApiError:
+      description: An unsuccessful request. Never include credentials or secrets in the response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiErrorResponse"
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status, service, apiVersion, backendConfigured]
+      properties:
+        status:
+          const: available
+        service:
+          const: sigil-web
+        apiVersion:
+          const: v1
+        backendConfigured:
+          type: boolean
+          description: Configuration indicator only; it is not a backend or database health check.
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password, rememberDevice]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        password:
+          type: string
+          minLength: 1
+          maxLength: 1024
+        rememberDevice:
+          type: boolean
+    LoginChallenge:
+      type: object
+      additionalProperties: false
+      required: [status, challengeId]
+      properties:
+        status:
+          const: mfa_required
+        challengeId:
+          type: string
+          minLength: 1
+          description: Short-lived opaque identifier; it must not grant access on its own.
+    RegistrationRequest:
+      type: object
+      additionalProperties: false
+      required: [fullName, companyName, email, phone, password]
+      properties:
+        fullName:
+          type: string
+          minLength: 2
+          maxLength: 200
+        companyName:
+          type: string
+          minLength: 2
+          maxLength: 200
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        phone:
+          type: string
+          minLength: 7
+          maxLength: 32
+        password:
+          type: string
+          minLength: 12
+          maxLength: 1024
+    RegistrationPending:
+      type: object
+      additionalProperties: false
+      required: [status, enrollmentId]
+      properties:
+        status:
+          const: enrollment_required
+        enrollmentId:
+          type: string
+          minLength: 1
+          description: Pending enrollment identifier; it must not grant access on its own.
+    FaceVerificationRequest:
+      type: object
+      additionalProperties: false
+      required: [challengeId, verificationToken]
+      properties:
+        challengeId:
+          type: string
+          minLength: 1
+        verificationToken:
+          type: string
+          minLength: 1
+          writeOnly: true
+          description: Short-lived assertion issued by the selected trusted biometric verifier; never a raw image or reusable credential.
+    AuthenticatedSession:
+      type: object
+      additionalProperties: false
+      required: [status, user]
+      properties:
+        status:
+          const: authenticated
+        user:
+          type: object
+          additionalProperties: false
+          required: [id, fullName, role]
+          properties:
+            id:
+              type: string
+              minLength: 1
+            fullName:
+              type: string
+              minLength: 1
+            role:
+              type: string
+              minLength: 1
+    ApiErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              minLength: 1
+            message:
+              type: string
+              minLength: 1

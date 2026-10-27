@@ -4,15 +4,19 @@
 
 `/login`
 
-## Flujos de frontend
+## Flujos de frontend y API
 
 - **Iniciar sesión**: correo corporativo y contraseña; después presenta el reto MFA facial.
-- **Crear cuenta**: nombre, empresa, correo corporativo, teléfono, contraseña y confirmación.
-- **Enrolamiento facial**: solicita permiso de cámara y muestra el encuadre de captura.
-- **MFA facial**: vuelve a solicitar la cámara como segundo factor antes del dashboard.
+- El formulario envía `POST /api/v1/auth/login`. Solo avanza si la API devuelve un `challengeId` válido.
+- **Crear cuenta**: nombre, empresa, correo corporativo, teléfono, contraseña y confirmación; envía `POST /api/v1/auth/register`.
+- Los contratos para comprobar el reto MFA, consultar la sesión y cerrar sesión están definidos en `backend/openapi.yaml`.
+- **Enrolamiento facial**: la cámara solo muestra una vista previa local; no captura ni transmite datos biométricos.
+- **MFA facial**: muestra que la verificación sigue pendiente; una vista previa no autentica ni da acceso al dashboard.
 
 ## Integración pendiente
 
-La interfaz no afirma una coincidencia facial real. Para producción se requiere backend para validar el correo empresarial, gestionar sesiones, obtener consentimiento biométrico, ejecutar prueba de vida, comparar un template cifrado y registrar auditoría MFA.
+Los endpoints locales de login y registro responden HTTP 501 hasta conectar el backend. La interfaz no afirma que las credenciales sean válidas ni que exista una coincidencia facial.
 
-El componente `auth-panel.tsx` deja preparados los estados y puntos de conexión para esa API. La cámara solo se solicita después de una acción explícita del usuario.
+Los contratos OpenAPI están en [`../../backend/openapi.yaml`](../../backend/openapi.yaml). Para conectar el backend, define `SIGIL_BACKEND_URL` en `.env.local` y reinicia Next.js. Los detalles están en [`../../backend/README.md`](../../backend/README.md).
+
+Antes de habilitar acceso real, el backend debe validar credenciales, realizar MFA y enrolamiento con consentimiento y prueba de vida, emitir y revocar sesiones seguras, y autorizar cada operación. El dashboard permanece en modo demostración.

@@ -17,13 +17,40 @@ La landing pública está disponible en `/informativo` y también es la ruta ini
 La página usa CSS Modules (`page.module.css`) para encapsular los estilos del portal. Los enlaces `/login` y `/login?tipo=corporativo` quedan preparados para la siguiente etapa: autenticación y creación de cuenta.
 
 La documentación específica de este apartado está en [`app/informativo/README.md`](app/informativo/README.md).
-## paso 1:
-descargar el proyecto con git clone https://github.com/Arman20252BIRD/Proyecto-Sigil.IA-Web.git
 
-## paso 2: 
-descargar las dependecias con npm install
+La API, los contratos y la futura conexión al backend están documentados en [`backend/README.md`](backend/README.md) y [`backend/openapi.yaml`](backend/openapi.yaml).
+Los controles aplicados y las tareas de seguridad pendientes están documentados en [`backend/SECURITY.md`](backend/SECURITY.md).
 
-## paso 3:
-luego ejecutas con npm run dev.
+## Requisitos
 
-hola universo
+- Node.js 20.9.0 o posterior (se recomienda Node.js 22 LTS).
+- npm, incluido con Node.js.
+
+Comprueba las versiones desde una terminal de PowerShell:
+
+```powershell
+node --version
+npm --version
+```
+
+## Instalación en Windows
+
+Abre el proyecto en VS Code y ejecuta estos comandos desde la carpeta que contiene `package.json`:
+
+```powershell
+npm ci
+npm run dev
+```
+
+Abre [http://localhost:3000](http://localhost:3000) en el navegador. Para detener el servidor, pulsa `Ctrl+C` en la terminal.
+
+`npm ci` instala las versiones exactas guardadas en `package-lock.json`. Vuelve a ejecutarlo si necesitas reconstruir las dependencias.
+
+## Verificación
+
+```powershell
+npm run lint
+npm run build
+```
+
+Para iniciar la compilación de producción localmente, ejecuta `npm run start` después de `npm run build`.

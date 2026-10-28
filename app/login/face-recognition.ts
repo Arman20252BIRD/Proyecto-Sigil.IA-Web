@@ -4,6 +4,15 @@ const descriptorLength = 1024;
 const confidenceThreshold = 0.6;
 const captureTimeoutMs = 30_000;
 
+export type DetectedFaceBox = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  videoWidth: number;
+  videoHeight: number;
+};
+
 let humanPromise: Promise<HumanInstance> | null = null;
 
 async function getHuman(): Promise<HumanInstance> {
@@ -52,9 +61,39 @@ function isUsableFace(face: FaceResult): face is FaceResult & { embedding: numbe
     && face.embedding.every(Number.isFinite);
 }
 
+export async function trackLiveFaceBox(
+  video: HTMLVideoElement,
+  onFaceDetected: (box: DetectedFaceBox | null) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  const human = await getHuman();
+
+  while (!signal.aborted) {
+    const result = await human.detect(video);
+    const face = result.face.length === 1 ? result.face[0] : null;
+    const faceBox = face?.box;
+
+    if (face && Array.isArray(faceBox) && faceBox.length >= 4) {
+      onFaceDetected({
+        x: faceBox[0],
+        y: faceBox[1],
+        width: faceBox[2],
+        height: faceBox[3],
+        videoWidth: video.videoWidth,
+        videoHeight: video.videoHeight,
+      });
+    } else {
+      onFaceDetected(null);
+    }
+
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 120));
+  }
+}
+
 export async function captureLiveFaceDescriptor(
   video: HTMLVideoElement,
   onStatus: (message: string) => void,
+  onFaceDetected?: (box: DetectedFaceBox | null) => void,
 ): Promise<number[]> {
   if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !video.videoWidth || !video.videoHeight) {
     throw new Error("La cámara todavía no entrega video. Espera un momento e inténtalo de nuevo.");
@@ -84,12 +123,24 @@ export async function captureLiveFaceDescriptor(
     }
 
     if (result.face.length !== 1) {
+      onFaceDetected?.(null);
       embeddings.length = 0;
       onStatus(result.face.length === 0
         ? "No se detecta un rostro. Centra tu cara y mejora la iluminación."
         : "Debe aparecer una sola persona frente a la cámara.");
     } else {
       const face = result.face[0];
+      const faceBox = face.box;
+      if (Array.isArray(faceBox) && faceBox.length >= 4) {
+        onFaceDetected?.({
+          x: faceBox[0],
+          y: faceBox[1],
+          width: faceBox[2],
+          height: faceBox[3],
+          videoWidth: video.videoWidth,
+          videoHeight: video.videoHeight,
+        });
+      }
       if ((face.real ?? 0) < confidenceThreshold || (face.live ?? 0) < confidenceThreshold) {
         embeddings.length = 0;
         onStatus("No se pudo confirmar la señal de vida. Retira fotos o pantallas y vuelve a intentarlo.");

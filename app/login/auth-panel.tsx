@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { useRouter } from "next/navigation";
-import { captureLiveFaceDescriptor } from "./face-recognition";
+import { captureLiveFaceDescriptor, trackLiveFaceBox, type DetectedFaceBox } from "./face-recognition";
 import styles from "./page.module.css";
 
 type Tab = "login" | "register";
@@ -56,8 +56,10 @@ export default function AuthPanel() {
   const [capturedFaceDescriptor, setCapturedFaceDescriptor] = useState<number[] | null>(null);
   const [registrationPassword, setRegistrationPassword] = useState("");
   const [registrationPasswordConfirm, setRegistrationPasswordConfirm] = useState("");
+  const [detectedFaceBox, setDetectedFaceBox] = useState<DetectedFaceBox | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const faceTrackingAbortRef = useRef<AbortController | null>(null);
   const passwordRequirements = getPasswordRequirements(registrationPassword);
   const passwordsMatch = registrationPassword.length > 0
     && registrationPassword === registrationPasswordConfirm;
@@ -67,15 +69,19 @@ export default function AuthPanel() {
   }, []);
 
   function stopCamera() {
+    faceTrackingAbortRef.current?.abort();
+    faceTrackingAbortRef.current = null;
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
+    setDetectedFaceBox(null);
     setFaceState("idle");
   }
 
   async function startCamera() {
     setNotice("");
     setCapturedFaceDescriptor(null);
+    setDetectedFaceBox(null);
     if (!navigator.mediaDevices?.getUserMedia) {
       setNotice("Este navegador no permite usar la cámara. Usa el código autenticador o prueba con HTTPS/localhost.");
       return;
@@ -95,6 +101,11 @@ export default function AuthPanel() {
       }
       videoRef.current.srcObject = stream;
       await videoRef.current.play();
+      const trackingController = new AbortController();
+      faceTrackingAbortRef.current = trackingController;
+      void trackLiveFaceBox(videoRef.current, setDetectedFaceBox, trackingController.signal).catch(() => {
+        if (!trackingController.signal.aborted) setDetectedFaceBox(null);
+      });
       setFaceState("camera");
       setNotice("Cámara activa. Mira al frente y parpadea una vez cuando comience el análisis.");
     } catch (error) {
@@ -111,12 +122,22 @@ export default function AuthPanel() {
     }
 
     setFaceState("processing");
+    faceTrackingAbortRef.current?.abort();
+    faceTrackingAbortRef.current = null;
     try {
-      return await captureLiveFaceDescriptor(video, setNotice);
+      return await captureLiveFaceDescriptor(video, setNotice, setDetectedFaceBox);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "No fue posible analizar el rostro.");
       return null;
     } finally {
+      setDetectedFaceBox(null);
+      if (streamRef.current && videoRef.current) {
+        const trackingController = new AbortController();
+        faceTrackingAbortRef.current = trackingController;
+        void trackLiveFaceBox(videoRef.current, setDetectedFaceBox, trackingController.signal).catch(() => {
+          if (!trackingController.signal.aborted) setDetectedFaceBox(null);
+        });
+      }
       setFaceState(streamRef.current ? "camera" : "idle");
     }
   }
@@ -395,6 +416,7 @@ export default function AuthPanel() {
           otpAuthUrl={setupEnrollment.otpAuthUrl}
           videoRef={videoRef}
           faceState={faceState}
+          faceBox={detectedFaceBox}
           faceCaptured={Boolean(capturedFaceDescriptor)}
           otpCode={otpCode}
           setOtpCode={setOtpCode}
@@ -411,7 +433,7 @@ export default function AuthPanel() {
           <FormHeader step="02 / SEGUNDO FACTOR" title="Confirma tu identidad" text="Verifica el rostro o introduce el código temporal de tu aplicación autenticadora." />
           {facialMfaEnabled && verificationMode === "face" ? (
             <>
-              <CameraFrame videoRef={videoRef} faceState={faceState} />
+              <CameraFrame videoRef={videoRef} faceState={faceState} faceBox={detectedFaceBox} />
               <p className={styles.mfaStatus}><i /> {faceState === "camera" ? "Parpadea una vez cuando se solicite." : "El análisis combina descriptor, señal de vida y reto de parpadeo."}</p>
               <div className={styles.mfaActions}>
                 <button type="button" className={styles.secondaryButton} onClick={resetLogin}>Volver</button>
@@ -465,6 +487,7 @@ export default function AuthPanel() {
           otpAuthUrl={pendingRegistration.otpAuthUrl}
           videoRef={videoRef}
           faceState={faceState}
+          faceBox={detectedFaceBox}
           faceCaptured
           otpCode={otpCode}
           setOtpCode={setOtpCode}
@@ -515,6 +538,7 @@ export default function AuthPanel() {
             onCapture={captureEnrollmentFace}
             videoRef={videoRef}
             faceState={faceState}
+            faceBox={detectedFaceBox}
             captured={Boolean(capturedFaceDescriptor)}
           />
           <label className={styles.consent}>
@@ -582,12 +606,61 @@ function PasswordRequirement({ met, children }: { met: boolean; children: string
   );
 }
 
-function CameraFrame({ videoRef, faceState }: { videoRef: React.RefObject<HTMLVideoElement | null>; faceState: FaceState }) {
+function CameraFrame({
+  videoRef,
+  faceState,
+  faceBox,
+}: {
+  videoRef: React.RefObject<HTMLVideoElement | null>;
+  faceState: FaceState;
+  faceBox: DetectedFaceBox | null;
+}) {
   const cameraVisible = faceState === "camera" || faceState === "processing";
+  const cameraRef = useRef<HTMLDivElement>(null);
+  const [cameraSize, setCameraSize] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    const camera = cameraRef.current;
+    if (!camera) return;
+    const updateSize = () => setCameraSize({ width: camera.clientWidth, height: camera.clientHeight });
+    updateSize();
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(camera);
+    return () => observer.disconnect();
+  }, []);
+
+  const faceGuideStyle = faceBox && cameraSize.width > 0 && cameraSize.height > 0
+    ? (() => {
+        const scale = Math.max(cameraSize.width / faceBox.videoWidth, cameraSize.height / faceBox.videoHeight);
+        const renderedWidth = faceBox.videoWidth * scale;
+        const renderedHeight = faceBox.videoHeight * scale;
+        const offsetX = (cameraSize.width - renderedWidth) / 2;
+        const offsetY = (cameraSize.height - renderedHeight) / 2;
+        const faceWidth = faceBox.width * scale;
+        const faceHeight = faceBox.height * scale;
+        const horizontalPadding = faceWidth * 0.1;
+        const verticalPadding = faceHeight * 0.12;
+        return {
+        position: "absolute" as const,
+        border: "2px solid #57dffe",
+        borderRadius: "48% 48% 42% 42%",
+        opacity: 1,
+        transition: "left .08s linear, top .08s linear, width .08s linear, height .08s linear",
+        left: `${offsetX + (faceBox.videoWidth - faceBox.x - faceBox.width) * scale - horizontalPadding}px`,
+        top: `${offsetY + faceBox.y * scale - verticalPadding}px`,
+        width: `${faceWidth + horizontalPadding * 2}px`,
+        height: `${faceHeight + verticalPadding * 2}px`,
+        };
+      })()
+    : undefined;
   return (
-    <div className={styles.camera}>
+    <div ref={cameraRef} className={styles.camera}>
       <video ref={videoRef} autoPlay muted playsInline className={cameraVisible ? styles.videoVisible : ""} />
-      {!cameraVisible && <div className={styles.faceGuide}><span /><span /><span /><span /></div>}
+      {(cameraVisible || !faceBox) && (
+        faceBox
+          ? <div className="faceDetected" style={faceGuideStyle} aria-label="Rostro detectado" />
+          : <div className={styles.faceGuide}><span /><span /><span /><span /></div>
+      )}
       <div className={styles.cameraLabel}>
         {faceState === "camera" ? "Cámara activa · reto de parpadeo" : faceState === "processing" ? "Analizando rostro y señal de vida…" : faceState === "captured" ? "Rostro enrolado en esta sesión" : "Cámara no iniciada"}
       </div>
@@ -600,18 +673,20 @@ function FaceEnroll({
   onCapture,
   videoRef,
   faceState,
+  faceBox,
   captured,
 }: {
   onStart: () => void;
   onCapture: () => void;
   videoRef: React.RefObject<HTMLVideoElement | null>;
   faceState: FaceState;
+  faceBox: DetectedFaceBox | null;
   captured: boolean;
 }) {
   return (
     <div className={styles.faceBox}>
       <div className={styles.faceHeader}><div><span>02 / ENROLAMIENTO FACIAL</span><h3>Reconocimiento facial</h3></div><b>LOCAL</b></div>
-      <CameraFrame videoRef={videoRef} faceState={captured ? "captured" : faceState} />
+      <CameraFrame videoRef={videoRef} faceState={captured ? "captured" : faceState} faceBox={faceBox} />
       <div className={styles.faceActions}>
         {faceState === "idle" || faceState === "captured" ? (
           <button type="button" className={styles.outlineButton} onClick={onStart}>{captured ? "Reactivar cámara" : "Activar cámara"}</button>
@@ -632,6 +707,7 @@ function MfaSetup({
   otpAuthUrl,
   videoRef,
   faceState,
+  faceBox,
   faceCaptured,
   otpCode,
   setOtpCode,
@@ -646,6 +722,7 @@ function MfaSetup({
   otpAuthUrl: string;
   videoRef: React.RefObject<HTMLVideoElement | null>;
   faceState: FaceState;
+  faceBox: DetectedFaceBox | null;
   faceCaptured: boolean;
   otpCode: string;
   setOtpCode: (code: string) => void;
@@ -665,7 +742,7 @@ function MfaSetup({
       {!faceCaptured && (
         <div className={styles.faceBox}>
           <div className={styles.faceHeader}><div><span>OPCIONAL</span><h3>Enrolar reconocimiento facial</h3></div><b>PRIVADO</b></div>
-          <CameraFrame videoRef={videoRef} faceState={faceState} />
+          <CameraFrame videoRef={videoRef} faceState={faceState} faceBox={faceBox} />
           <div className={styles.faceActions}>
             {faceState === "idle" ? (
               <button type="button" className={styles.outlineButton} onClick={onStartCamera}>Activar cámara</button>

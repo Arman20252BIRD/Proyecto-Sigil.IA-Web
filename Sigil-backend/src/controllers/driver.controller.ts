@@ -2,7 +2,7 @@
 import { Request, Response } from 'express';
 import { pool } from '../config/db';
 
-const operationalStatuses = new Set(['En ruta', 'Atención', 'Sin conexión']);
+const operationalStatuses = new Set(['Activo', 'Inactivo']);
 const driverFields = new Set(['nombre', 'email', 'telefono', 'estatus_operativo', 'vehicle_id']);
 
 type DriverInput = {
@@ -60,9 +60,9 @@ function parseDriverInput(value: unknown, partial = false): { input?: DriverInpu
 
     if (!partial || hasOwn(value, 'estatus_operativo')) {
         if (!partial && value.estatus_operativo === undefined) {
-            input.estatus_operativo = 'En ruta';
+            input.estatus_operativo = 'Activo';
         } else if (typeof value.estatus_operativo !== 'string' || !operationalStatuses.has(value.estatus_operativo)) {
-            return { error: 'El estado debe ser En ruta, Atención o Sin conexión.' };
+            return { error: 'El estado debe ser Activo o Inactivo.' };
         } else {
             input.estatus_operativo = value.estatus_operativo;
         }
@@ -118,8 +118,10 @@ export const createDriver = async (req: Request, res: Response): Promise<void> =
     }
 
     const { nombre, email, telefono, estatus_operativo } = parsed.input;
+    const client = await pool.connect();
     try {
-        const newDriver = await pool.query(
+        await client.query('BEGIN');
+        const newDriver = await client.query(
             `WITH inserted AS (
                 INSERT INTO drivers (nombre, email, telefono, estatus_operativo, vehicle_id)
                 VALUES ($1, $2, $3, $4, $5)
@@ -130,9 +132,21 @@ export const createDriver = async (req: Request, res: Response): Promise<void> =
             LEFT JOIN vehicles v ON v.id = i.vehicle_id`,
             [nombre, email, telefono, estatus_operativo, parsed.input.vehicle_id ?? null]
         );
-        res.status(201).json(newDriver.rows[0]);
+        const demoAlertCreated = Math.random() < 0.5;
+        if (demoAlertCreated) {
+            await client.query(
+                `INSERT INTO events (driver_id, created_at, event_type, severity, message, source, hardware_id)
+                 VALUES ($1, NOW(), 'demo_alert', 'warning', $2, 'demo', $3)`,
+                [newDriver.rows[0].id, `Alerta de demostración generada al registrar a ${nombre}.`, newDriver.rows[0].hardware_id ?? null]
+            );
+        }
+        await client.query('COMMIT');
+        res.status(201).json({ ...newDriver.rows[0], demo_alert_created: demoAlertCreated });
     } catch (error) {
+        await client.query('ROLLBACK');
         sendDatabaseError(error, res, 'crear');
+    } finally {
+        client.release();
     }
 };
 

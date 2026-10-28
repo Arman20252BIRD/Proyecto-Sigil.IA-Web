@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { useRouter } from "next/navigation";
-import { captureLiveFaceDescriptor, trackLiveFaceBox, type DetectedFaceBox } from "./face-recognition";
+import { captureLiveFaceDescriptor, captureVideoFrame, trackLiveFaceBox, type DetectedFaceBox } from "./face-recognition";
 import styles from "./page.module.css";
 
 type Tab = "login" | "register";
@@ -46,6 +46,8 @@ export default function AuthPanel() {
   const [loginStep, setLoginStep] = useState<1 | 2>(1);
   const [faceState, setFaceState] = useState<FaceState>("idle");
   const [notice, setNotice] = useState("");
+  const [forgotPassword, setForgotPassword] = useState(false);
+  const [resetToken, setResetToken] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [mfaToken, setMfaToken] = useState("");
   const [setupEnrollment, setSetupEnrollment] = useState<Enrollment | null>(null);
@@ -54,6 +56,7 @@ export default function AuthPanel() {
   const [verificationMode, setVerificationMode] = useState<"face" | "totp">("face");
   const [otpCode, setOtpCode] = useState("");
   const [capturedFaceDescriptor, setCapturedFaceDescriptor] = useState<number[] | null>(null);
+  const [capturedProfilePhoto, setCapturedProfilePhoto] = useState<string | null>(null);
   const [registrationPassword, setRegistrationPassword] = useState("");
   const [registrationPasswordConfirm, setRegistrationPasswordConfirm] = useState("");
   const [detectedFaceBox, setDetectedFaceBox] = useState<DetectedFaceBox | null>(null);
@@ -66,6 +69,11 @@ export default function AuthPanel() {
 
   useEffect(() => () => {
     streamRef.current?.getTracks().forEach((track) => track.stop());
+  }, []);
+
+  useEffect(() => {
+    const token = new URLSearchParams(window.location.search).get("reset_token");
+    if (token) setResetToken(token);
   }, []);
 
   function stopCamera() {
@@ -81,6 +89,7 @@ export default function AuthPanel() {
   async function startCamera() {
     setNotice("");
     setCapturedFaceDescriptor(null);
+    setCapturedProfilePhoto(null);
     setDetectedFaceBox(null);
     if (!navigator.mediaDevices?.getUserMedia) {
       setNotice("Este navegador no permite usar la cámara. Usa el código autenticador o prueba con HTTPS/localhost.");
@@ -107,7 +116,7 @@ export default function AuthPanel() {
         if (!trackingController.signal.aborted) setDetectedFaceBox(null);
       });
       setFaceState("camera");
-      setNotice("Cámara activa. Mira al frente y parpadea una vez cuando comience el análisis.");
+      setNotice("Cámara activa. Mira al frente y mantén el rostro centrado durante el análisis.");
     } catch (error) {
       stopCamera();
       setNotice(error instanceof Error ? error.message : "No se pudo acceder a la cámara.");
@@ -184,6 +193,64 @@ export default function AuthPanel() {
     }
   }
 
+  async function submitPasswordResetRequest(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setNotice("");
+    setIsSubmitting(true);
+    const formData = new FormData(event.currentTarget);
+    try {
+      const response = await fetch(`${API_URL}/api/auth/password-reset/request`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: formData.get("email") }),
+      });
+      const result: AuthResponse = await response.json();
+      setNotice(result.message ?? result.error ?? "No fue posible solicitar el restablecimiento.");
+    } catch {
+      setNotice("No fue posible conectar con el backend. Verifica que el servidor esté activo.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function submitPasswordReset(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setNotice("");
+    const formData = new FormData(event.currentTarget);
+    const password = String(formData.get("password") ?? "");
+    const confirm = String(formData.get("confirm") ?? "");
+    const requirements = getPasswordRequirements(password);
+    if (!requirements.length || !requirements.uppercase || !requirements.lowercase || !requirements.number) {
+      setNotice("La contraseña debe tener entre 12 y 128 caracteres, con mayúsculas, minúsculas y números.");
+      return;
+    }
+    if (password !== confirm) {
+      setNotice("Las contraseñas no coinciden.");
+      return;
+    }
+    setIsSubmitting(true);
+    try {
+      const response = await fetch(`${API_URL}/api/auth/password-reset/confirm`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: resetToken, password }),
+      });
+      const result: AuthResponse = await response.json();
+      if (!response.ok || !result.success) {
+        setNotice(result.error ?? "No fue posible actualizar la contraseña.");
+        return;
+      }
+      window.history.replaceState({}, "", "/login");
+      setResetToken("");
+      setForgotPassword(false);
+      setNotice(result.message ?? "Contraseña actualizada. Ya puedes iniciar sesión.");
+    } catch {
+      setNotice("No fue posible conectar con el backend. Verifica que el servidor esté activo.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   async function submitRegister(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setNotice("");
@@ -216,6 +283,7 @@ export default function AuthPanel() {
 
     const faceDescriptor = capturedFaceDescriptor ?? await captureFace();
     if (!faceDescriptor) return;
+    const profilePhoto = capturedProfilePhoto ?? (videoRef.current ? captureVideoFrame(videoRef.current) : null);
 
     setIsSubmitting(true);
     try {
@@ -229,6 +297,7 @@ export default function AuthPanel() {
           telefono_corporativo: formData.get("phone"),
           password,
           faceDescriptor,
+          profilePhoto,
         }),
       });
       const result: AuthResponse = await response.json();
@@ -346,6 +415,7 @@ export default function AuthPanel() {
   async function captureEnrollmentFace() {
     const descriptor = await captureFace();
     if (descriptor) {
+      setCapturedProfilePhoto(videoRef.current ? captureVideoFrame(videoRef.current) : null);
       setCapturedFaceDescriptor(descriptor);
       stopCamera();
       setFaceState("captured");
@@ -380,6 +450,8 @@ export default function AuthPanel() {
   function changeTab(nextTab: Tab) {
     stopCamera();
     setTab(nextTab);
+    setForgotPassword(false);
+    setResetToken("");
     setLoginStep(1);
     setCapturedFaceDescriptor(null);
     setPendingRegistration(null);
@@ -398,7 +470,34 @@ export default function AuthPanel() {
         <button className={tab === "register" ? styles.tabActive : ""} onClick={() => changeTab("register")}>Crear cuenta</button>
       </div>
 
-      {tab === "login" && loginStep === 1 && (
+      {tab === "login" && loginStep === 1 && resetToken && (
+        <form className={styles.form} onSubmit={submitPasswordReset}>
+          <FormHeader step="RESTABLECER CONTRASEÑA" title="Crea una nueva contraseña" text="Elige una contraseña segura para volver a acceder a tu cuenta." />
+          <Field label="Nueva contraseña" name="password" type="password" placeholder="Mínimo 12 caracteres" autoComplete="new-password" />
+          <Field label="Validar contraseña" name="confirm" type="password" placeholder="Repite la nueva contraseña" autoComplete="new-password" />
+          <button className={styles.primaryButton} type="submit" disabled={isSubmitting}>
+            {isSubmitting ? "Guardando..." : "Guardar nueva contraseña"}
+          </button>
+          <button type="button" className="forgotPassword" onClick={() => { window.history.replaceState({}, "", "/login"); setResetToken(""); setNotice(""); }}>
+            Volver al inicio de sesión
+          </button>
+        </form>
+      )}
+
+      {tab === "login" && loginStep === 1 && forgotPassword && !resetToken && (
+        <form className={styles.form} onSubmit={submitPasswordResetRequest}>
+          <FormHeader step="RECUPERAR CONTRASEÑA" title="Restablece tu contraseña" text="Solicita un enlace seguro para crear una nueva contraseña." />
+          <Field label="Correo corporativo" name="email" type="email" placeholder="admin@empresa.com" />
+          <button className={styles.primaryButton} type="submit" disabled={isSubmitting}>
+            {isSubmitting ? "Enviando..." : "Enviar enlace"}
+          </button>
+          <button type="button" className="forgotPassword" onClick={() => { setForgotPassword(false); setNotice(""); }}>
+            Volver al inicio de sesión
+          </button>
+        </form>
+      )}
+
+      {tab === "login" && loginStep === 1 && !forgotPassword && !resetToken && (
         <form className={styles.form} onSubmit={submitLogin}>
           <FormHeader step="01 / CREDENCIALES" title="Acceso de administrador" text="Usa el correo corporativo registrado y tu contraseña." />
           <Field label="Correo corporativo" name="email" type="email" placeholder="admin@empresa.com" />
@@ -406,6 +505,7 @@ export default function AuthPanel() {
           <button className={styles.primaryButton} type="submit" disabled={isSubmitting}>
             {isSubmitting ? "Validando..." : "Continuar con MFA"} <span>→</span>
           </button>
+          <button type="button" className="forgotPassword" onClick={() => { setForgotPassword(true); setNotice(""); }}>¿Olvidaste tu contraseña?</button>
         </form>
       )}
 
@@ -434,7 +534,7 @@ export default function AuthPanel() {
           {facialMfaEnabled && verificationMode === "face" ? (
             <>
               <CameraFrame videoRef={videoRef} faceState={faceState} faceBox={detectedFaceBox} />
-              <p className={styles.mfaStatus}><i /> {faceState === "camera" ? "Parpadea una vez cuando se solicite." : "El análisis combina descriptor, señal de vida y reto de parpadeo."}</p>
+              <p className={styles.mfaStatus}><i /> {faceState === "camera" ? "Mantén el rostro centrado durante el análisis." : "El análisis combina descriptor, señal de vida y descriptor facial."}</p>
               <div className={styles.mfaActions}>
                 <button type="button" className={styles.secondaryButton} onClick={resetLogin}>Volver</button>
                 {faceState === "idle" ? (
@@ -445,14 +545,14 @@ export default function AuthPanel() {
                   </button>
                 )}
               </div>
-              <button type="button" className={styles.textButton} onClick={() => { stopCamera(); setVerificationMode("totp"); setNotice(""); }}>
+              <button type="button" className={`${styles.textButton} authenticatorButton`} onClick={() => { stopCamera(); setVerificationMode("totp"); setNotice(""); }}>
                 Usar código autenticador en su lugar
               </button>
             </>
           ) : (
             <>
               {facialMfaEnabled && (
-                <button type="button" className={styles.textButton} onClick={() => { setVerificationMode("face"); setOtpCode(""); setNotice(""); }}>
+                <button type="button" className={`${styles.textButton} facialBackButton`} onClick={() => { setVerificationMode("face"); setOtpCode(""); setNotice(""); }}>
                   Volver a verificación facial
                 </button>
               )}
@@ -638,8 +738,8 @@ function CameraFrame({
         const offsetY = (cameraSize.height - renderedHeight) / 2;
         const faceWidth = faceBox.width * scale;
         const faceHeight = faceBox.height * scale;
-        const horizontalPadding = faceWidth * 0.1;
-        const verticalPadding = faceHeight * 0.12;
+        const horizontalPadding = faceWidth * 0.04;
+        const verticalPadding = faceHeight * 0.06;
         return {
         position: "absolute" as const,
         border: "2px solid #57dffe",
@@ -662,7 +762,7 @@ function CameraFrame({
           : <div className={styles.faceGuide}><span /><span /><span /><span /></div>
       )}
       <div className={styles.cameraLabel}>
-        {faceState === "camera" ? "Cámara activa · reto de parpadeo" : faceState === "processing" ? "Analizando rostro y señal de vida…" : faceState === "captured" ? "Rostro enrolado en esta sesión" : "Cámara no iniciada"}
+        {faceState === "camera" ? "Cámara activa · detección facial" : faceState === "processing" ? "Analizando rostro y señal de vida…" : faceState === "captured" ? "Rostro enrolado en esta sesión" : "Cámara no iniciada"}
       </div>
     </div>
   );
@@ -695,7 +795,7 @@ function FaceEnroll({
             {faceState === "processing" ? "Analizando…" : captured ? "Capturar de nuevo" : "Capturar rostro"}
           </button>
         )}
-        <small>Parpadea cuando se solicite. Solo se envía el descriptor facial; no se suben imágenes.</small>
+        <small>Mantén el rostro centrado. Solo se envía el descriptor facial; no se suben imágenes.</small>
       </div>
     </div>
   );

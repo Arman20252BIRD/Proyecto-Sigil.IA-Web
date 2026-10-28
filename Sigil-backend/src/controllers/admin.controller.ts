@@ -1,5 +1,6 @@
 
 import { Response } from 'express';
+import bcrypt from 'bcryptjs';
 import { pool } from '../config/db';
 import type { AuthRequest } from '../middleware/auth.middleware';
 
@@ -15,7 +16,7 @@ export const getAdminProfile = async (req: AuthRequest, res: Response): Promise<
             res.status(403).json({ error: 'No puedes consultar otro perfil de administrador.' });
             return;
         }
-        const query = `SELECT id, nombre, email, telefono_corporativo, empresa,
+        const query = `SELECT id, nombre, email, telefono_corporativo, empresa, profile_photo,
                               mfa_facial_status, totp_enabled, updated_at
                        FROM admins WHERE id = $1`;
         const result = await pool.query(query, [id]);
@@ -45,7 +46,7 @@ export const updateAdminProfile = async (req: AuthRequest, res: Response): Promi
         return;
     }
 
-    const { nombre, email, telefono_corporativo, empresa } = body as Record<string, unknown>;
+    const { nombre, email, telefono_corporativo, empresa, newPassword, profilePhoto } = body as Record<string, unknown>;
     const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
     if (typeof nombre !== 'string' || nombre.trim().length < 2 || nombre.trim().length > 120) {
         res.status(400).json({ error: 'El nombre debe tener entre 2 y 120 caracteres.' });
@@ -53,6 +54,20 @@ export const updateAdminProfile = async (req: AuthRequest, res: Response): Promi
     }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
         res.status(400).json({ error: 'Escribe un correo electrónico válido.' });
+        return;
+    }
+    if (normalizedEmail !== req.admin?.email.toLowerCase()) {
+        res.status(400).json({ error: 'El correo corporativo no puede modificarse desde este apartado.' });
+        return;
+    }
+    if (newPassword !== undefined && (typeof newPassword !== 'string' || newPassword.length < 12 || newPassword.length > 128
+        || !/\p{Ll}/u.test(newPassword) || !/\p{Lu}/u.test(newPassword) || !/\p{N}/u.test(newPassword))) {
+        res.status(400).json({ error: 'La nueva contraseña debe tener 12 caracteres e incluir mayúscula, minúscula y número.' });
+        return;
+    }
+    if (profilePhoto !== undefined && (profilePhoto !== null
+        && (typeof profilePhoto !== 'string' || !profilePhoto.startsWith('data:image/') || profilePhoto.length > 1_500_000))) {
+        res.status(400).json({ error: 'La foto de perfil no es válida o supera el tamaño permitido.' });
         return;
     }
     if (telefono_corporativo !== null && (typeof telefono_corporativo !== 'string' || telefono_corporativo.trim().length > 30)) {
@@ -65,23 +80,26 @@ export const updateAdminProfile = async (req: AuthRequest, res: Response): Promi
     }
 
     try {
+        const passwordHash = typeof newPassword === 'string' ? await bcrypt.hash(newPassword, 12) : null;
         const query = `
             UPDATE admins
             SET nombre = $1,
-                email = $2,
-                telefono_corporativo = $3,
-                empresa = $4,
+                telefono_corporativo = $2,
+                empresa = $3,
+                password = COALESCE($4, password),
+                profile_photo = COALESCE($5, profile_photo),
                 updated_at = CURRENT_TIMESTAMP
-            WHERE id = $5
-            RETURNING id, nombre, email, telefono_corporativo, empresa,
+            WHERE id = $6
+            RETURNING id, nombre, email, telefono_corporativo, empresa, profile_photo,
                       mfa_facial_status, totp_enabled, updated_at;
         `;
 
         const values = [
             nombre.trim(),
-            normalizedEmail,
             typeof telefono_corporativo === 'string' ? telefono_corporativo.trim() || null : null,
             typeof empresa === 'string' ? empresa.trim() || null : null,
+            passwordHash,
+            typeof profilePhoto === 'string' ? profilePhoto : null,
             id,
         ];
         const result = await pool.query(query, values);

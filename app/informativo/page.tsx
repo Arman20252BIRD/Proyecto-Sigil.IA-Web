@@ -3,6 +3,7 @@ import Image from "next/image";
 import Link from "next/link";
 import styles from "./page.module.css";
 import SensorDemo from "./sensor-demo";
+import { Preferences } from "../preferences";
 
 export const metadata: Metadata = {
   title: "Sigil.IA | Monitoreo vehicular inteligente",
@@ -42,10 +43,10 @@ const features = [
 export default function InformativoPage() {
   return (
     <main className={styles.page}>
-      <header className={styles.header}><div className={styles.headerInner}>
-        <Link className={styles.brand} href="#hero" aria-label="Sigil.IA inicio"><Image className={styles.headerLogo} src="/sigil-logo.png" alt="Sigil.IA - Ciberseguridad y telemetría vehicular" width={260} height={160} priority /></Link>
+      <header className={styles.header}><div className={`${styles.headerInner} infoHeaderInner`}>
+        <Link className={styles.brand} href="#hero" aria-label="Sigil.IA inicio"><Image className={styles.headerLogo} src="/logo-sigil-transparente.png" alt="Sigil.IA - Ciberseguridad y telemetría vehicular" width={260} height={160} priority /></Link>
         <nav className={styles.nav} aria-label="Navegación principal"><a href="#proyecto">El proyecto</a><a href="#como-funciona">Cómo funciona</a><a href="#funciones">Funciones</a></nav>
-        <div className={styles.actions}><Link className={styles.login} href="/login">Iniciar sesión</Link></div>
+        <div className={styles.actions}><Preferences inHeader /><Link className={styles.login} href="/login">Iniciar sesión</Link></div>
       </div></header>
 
       <section className={styles.hero} id="hero"><div className={styles.heroInner}>

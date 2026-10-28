@@ -7,6 +7,7 @@ import { jwtSecret } from '../config/auth';
 import { decryptFaceData, encryptFaceData } from '../security/face-data';
 import type { AuthRequest } from '../middleware/auth.middleware';
 import jwt from 'jsonwebtoken';
+import { createHash, randomBytes } from 'node:crypto';
 
 const FACE_DESCRIPTOR_LENGTH = 1024;
 const FACE_MATCH_THRESHOLD = 0.5;
@@ -102,7 +103,7 @@ export const registerAdmin = async (req: Request, res: Response): Promise<void> 
         return;
     }
 
-    const { nombre, email, password, telefono_corporativo, empresa, faceDescriptor } = req.body ?? {};
+    const { nombre, email, password, telefono_corporativo, empresa, faceDescriptor, profilePhoto } = req.body ?? {};
     const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
 
     if (typeof nombre !== 'string' || nombre.trim().length < 2 || nombre.trim().length > 120) {
@@ -126,6 +127,11 @@ export const registerAdmin = async (req: Request, res: Response): Promise<void> 
         });
         return;
     }
+    if (profilePhoto !== undefined && profilePhoto !== null
+        && (typeof profilePhoto !== 'string' || !profilePhoto.startsWith('data:image/') || profilePhoto.length > 1_500_000)) {
+        res.status(400).json({ error: 'La foto de perfil no es válida o supera el tamaño permitido.' });
+        return;
+    }
 
     try {
         await pool.query('DELETE FROM pending_admin_enrollments WHERE expires_at <= NOW()');
@@ -146,9 +152,9 @@ export const registerAdmin = async (req: Request, res: Response): Promise<void> 
         const enrollmentId = randomUUID();
         const pending = await pool.query(
             `INSERT INTO pending_admin_enrollments
-                (id, nombre, email, password, telefono_corporativo, empresa,
+                (id, nombre, email, password, telefono_corporativo, empresa, profile_photo,
                  face_template_encrypted, totp_secret_encrypted, expires_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW() + INTERVAL '15 minutes')
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW() + INTERVAL '15 minutes')
              RETURNING email`,
             [
                 enrollmentId,
@@ -157,6 +163,7 @@ export const registerAdmin = async (req: Request, res: Response): Promise<void> 
                 passwordHash,
                 typeof telefono_corporativo === 'string' ? telefono_corporativo.trim() : null,
                 typeof empresa === 'string' ? empresa.trim() : null,
+                typeof profilePhoto === 'string' ? profilePhoto : null,
                 encryptFaceData(JSON.stringify(faceDescriptor)),
                 encryptFaceData(totpSecret),
             ]
@@ -190,7 +197,7 @@ export const verifyRegistrationTotp = async (req: AuthRequest, res: Response): P
 
     try {
         const result = await pool.query(
-            `SELECT id, nombre, email, password, telefono_corporativo, empresa,
+            `SELECT id, nombre, email, password, telefono_corporativo, empresa, profile_photo,
                     face_template_encrypted, totp_secret_encrypted, failed_attempts, locked_until
              FROM pending_admin_enrollments
              WHERE id = $1 AND expires_at > NOW()`,
@@ -223,16 +230,17 @@ export const verifyRegistrationTotp = async (req: AuthRequest, res: Response): P
             await client.query('BEGIN');
             const inserted = await client.query(
                 `INSERT INTO admins
-                    (nombre, email, password, telefono_corporativo, empresa, face_template_encrypted,
+                    (nombre, email, password, telefono_corporativo, empresa, profile_photo, face_template_encrypted,
                      totp_secret_encrypted, totp_enabled, totp_last_used_step, mfa_facial_status)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE, $8, TRUE)
-                 RETURNING id, nombre, email, telefono_corporativo, empresa, mfa_facial_status`,
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE, $9, TRUE)
+                 RETURNING id, nombre, email, telefono_corporativo, empresa, profile_photo, mfa_facial_status`,
                 [
                     pending.nombre,
                     pending.email,
                     pending.password,
                     pending.telefono_corporativo,
                     pending.empresa,
+                    pending.profile_photo,
                     pending.face_template_encrypted,
                     pending.totp_secret_encrypted,
                     verification.timeStep,
@@ -510,5 +518,82 @@ export const verifyTotpMfa = async (req: AuthRequest, res: Response): Promise<vo
     } catch (error) {
         console.error('Error al verificar TOTP:', error);
         res.status(500).json({ error: 'Error al verificar el código autenticador.' });
+    }
+};
+
+const passwordResetHash = (token: string) => createHash('sha256').update(token).digest('hex');
+const validPassword = (password: unknown): password is string =>
+    typeof password === 'string' && password.length >= 12 && password.length <= 128
+    && /\p{Lu}/u.test(password) && /\p{Ll}/u.test(password) && /\p{N}/u.test(password);
+
+export const requestPasswordReset = async (req: Request, res: Response): Promise<void> => {
+    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    const genericMessage = 'Si el correo está registrado, recibirás un enlace para restablecer tu contraseña.';
+    try {
+        const result = await pool.query('SELECT id, nombre, email FROM admins WHERE LOWER(email) = $1 LIMIT 1', [email]);
+        const admin = result.rows[0];
+        if (admin && process.env.RESEND_API_KEY) {
+            const rawToken = randomBytes(32).toString('hex');
+            await pool.query('DELETE FROM password_reset_tokens WHERE admin_id = $1 OR expires_at < CURRENT_TIMESTAMP', [admin.id]);
+            await pool.query(
+                `INSERT INTO password_reset_tokens (token_hash, admin_id, expires_at)
+                 VALUES ($1, $2, CURRENT_TIMESTAMP + INTERVAL '15 minutes')`,
+                [passwordResetHash(rawToken), admin.id]
+            );
+            const frontendUrl = process.env.FRONTEND_URL ?? 'http://localhost:3000';
+            const resetUrl = `${frontendUrl}/login?reset_token=${rawToken}`;
+            const emailResponse = await fetch('https://api.resend.com/emails', {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    from: process.env.RESEND_FROM ?? 'onboarding@resend.dev',
+                    to: [admin.email],
+                    subject: 'Restablece tu contraseña de Sigil.IA',
+                    html: `<p>Hola ${String(admin.nombre).replace(/[&<>"']/g, '')},</p><p>Usa este enlace para crear una nueva contraseña. Expira en 15 minutos.</p><p><a href="${resetUrl}">Restablecer contraseña</a></p>`,
+                }),
+            });
+            if (!emailResponse.ok) console.error('Resend password reset failed:', await emailResponse.text());
+        } else if (admin) {
+            console.error('Password reset email was not sent: RESEND_API_KEY is not configured in Sigil-backend/.env');
+        }
+        res.json({ success: true, message: genericMessage });
+    } catch (error) {
+        console.error('Password reset request failed:', error);
+        res.json({ success: true, message: genericMessage });
+    }
+};
+
+export const resetPassword = async (req: Request, res: Response): Promise<void> => {
+    const token = typeof req.body?.token === 'string' ? req.body.token : '';
+    const password = req.body?.password;
+    if (!token || !validPassword(password)) {
+        res.status(400).json({ error: 'La contraseña debe tener entre 12 y 128 caracteres, con mayúsculas, minúsculas y números.' });
+        return;
+    }
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const tokenResult = await client.query(
+            `SELECT admin_id FROM password_reset_tokens
+             WHERE token_hash = $1 AND used_at IS NULL AND expires_at > CURRENT_TIMESTAMP FOR UPDATE`,
+            [passwordResetHash(token)]
+        );
+        const reset = tokenResult.rows[0];
+        if (!reset) {
+            await client.query('ROLLBACK');
+            res.status(400).json({ error: 'El enlace no es válido o ya expiró.' });
+            return;
+        }
+        const passwordHash = await bcrypt.hash(password, 12);
+        await client.query('UPDATE admins SET password_hash = $1 WHERE id = $2', [passwordHash, reset.admin_id]);
+        await client.query('UPDATE password_reset_tokens SET used_at = CURRENT_TIMESTAMP WHERE token_hash = $1', [passwordResetHash(token)]);
+        await client.query('COMMIT');
+        res.json({ success: true, message: 'Contraseña actualizada. Ya puedes iniciar sesión.' });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Password reset failed:', error);
+        res.status(500).json({ error: 'No fue posible actualizar la contraseña.' });
+    } finally {
+        client.release();
     }
 };

@@ -8,6 +8,8 @@ import { pool } from './config/db';
 import {
     completeMfaSetup,
     loginStepOne,
+    requestPasswordReset,
+    resetPassword,
     registerAdmin,
     verifyFacialMfa,
     verifyRegistrationTotp,
@@ -15,7 +17,8 @@ import {
 } from './controllers/auth.controller';
 import { getAdminProfile, updateAdminProfile } from './controllers/admin.controller';
 import { createDriver, getDrivers, updateDriver, deleteDriver } from './controllers/driver.controller';
-import { getEventsDashboard, getGpsTracking } from './controllers/dashboard.controller';
+import { getEventsDashboard, getGpsTracking, ingestDeviceEvent } from './controllers/dashboard.controller';
+import { requireDeviceKey } from './middleware/device-auth.middleware';
 import {
     requireAuth,
     requireEnrollmentSession,
@@ -65,6 +68,8 @@ app.get('/api/health', async (req: Request, res: Response) => {
 app.post('/api/auth/register', authRateLimit, registerAdmin);
 app.post('/api/auth/register/verify-totp', authRateLimit, requireEnrollmentSession, verifyRegistrationTotp);
 app.post('/api/auth/login-step1', authRateLimit, loginStepOne);
+app.post('/api/auth/password-reset/request', authRateLimit, requestPasswordReset);
+app.post('/api/auth/password-reset/confirm', authRateLimit, resetPassword);
 app.post('/api/auth/setup-mfa', authRateLimit, requireMfaSetup, completeMfaSetup);
 app.post('/api/auth/verify-facial', authRateLimit, requireMfaSession, verifyFacialMfa);
 app.post('/api/auth/verify-totp', authRateLimit, requireMfaSession, verifyTotpMfa);
@@ -86,6 +91,7 @@ app.delete('/api/drivers/:id', requireAuth, deleteDriver);
 // --- RUTAS DE DASHBOARD Y TELEMETRÍA ---
 app.get('/api/dashboard/events', requireAuth, getEventsDashboard);
 app.get('/api/dashboard/gps', requireAuth, getGpsTracking);
+app.post('/api/telemetry/events', requireDeviceKey, ingestDeviceEvent);
 
 async function purgeExpiredMfaEnrollments(): Promise<void> {
     try {

@@ -74,3 +74,22 @@ CREATE TABLE IF NOT EXISTS gps_tracks (
     latitude DOUBLE PRECISION,
     longitude DOUBLE PRECISION
 );
+
+ALTER TABLE admins ADD COLUMN IF NOT EXISTS profile_photo TEXT;
+ALTER TABLE pending_admin_enrollments ADD COLUMN IF NOT EXISTS profile_photo TEXT;
+ALTER TABLE events ADD COLUMN IF NOT EXISTS event_type TEXT NOT NULL DEFAULT 'alert';
+ALTER TABLE events ADD COLUMN IF NOT EXISTS severity TEXT NOT NULL DEFAULT 'warning';
+ALTER TABLE events ADD COLUMN IF NOT EXISTS message TEXT;
+ALTER TABLE events ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'dashboard';
+ALTER TABLE events ADD COLUMN IF NOT EXISTS hardware_id TEXT;
+
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    token_hash TEXT PRIMARY KEY,
+    admin_id BIGINT NOT NULL REFERENCES admins(id) ON DELETE CASCADE,
+    expires_at TIMESTAMPTZ NOT NULL,
+    used_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS password_reset_tokens_admin_idx ON password_reset_tokens(admin_id);
+CREATE INDEX IF NOT EXISTS password_reset_tokens_expiry_idx ON password_reset_tokens(expires_at);

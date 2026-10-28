@@ -22,7 +22,7 @@
    ```
 
 3. Abre `http://localhost:3000/login`. En el primer inicio de sesión de una cuenta existente, escanea el QR con la aplicación autenticadora y confirma el código. Puedes enrolar el rostro o continuar solo con TOTP.
-4. Para crear una cuenta nueva, abre **Crear cuenta**, acepta el consentimiento biométrico, activa la cámara, centra el rostro, completa el reto de parpadeo y registra la cuenta.
+4. Para crear una cuenta nueva, abre **Crear cuenta**. La lista bajo la contraseña marca en tiempo real los requisitos cumplidos: 12–128 caracteres, al menos una mayúscula, una minúscula y un número; también confirma si ambas contraseñas coinciden. Se aceptan letras acentuadas. Acepta el consentimiento biométrico, activa la cámara, centra el rostro, completa el reto de parpadeo y registra la cuenta. La página indica por separado si el problema está en el nombre, correo, contraseña o captura facial.
 5. Escanea el QR de TOTP y confirma el código de seis dígitos. Al finalizar, se inicia la sesión.
 6. En próximos accesos, elige reconocimiento facial o **Usar código autenticador en su lugar**.
 

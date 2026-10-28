@@ -105,13 +105,24 @@ export const registerAdmin = async (req: Request, res: Response): Promise<void> 
     const { nombre, email, password, telefono_corporativo, empresa, faceDescriptor } = req.body ?? {};
     const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
 
-    if (typeof nombre !== 'string' || nombre.trim().length < 2 || nombre.trim().length > 120
-        || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)
-        || typeof password !== 'string' || password.length < 12 || password.length > 128
-        || !/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/\d/.test(password)
-        || !isFaceDescriptor(faceDescriptor)) {
+    if (typeof nombre !== 'string' || nombre.trim().length < 2 || nombre.trim().length > 120) {
+        res.status(400).json({ error: 'El nombre debe tener entre 2 y 120 caracteres.' });
+        return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+        res.status(400).json({ error: 'Escribe un correo electrónico válido.' });
+        return;
+    }
+    if (typeof password !== 'string' || password.length < 12 || password.length > 128
+        || !/\p{Ll}/u.test(password) || !/\p{Lu}/u.test(password) || !/\p{N}/u.test(password)) {
         res.status(400).json({
-            error: 'Revisa nombre, correo, contraseña (12 caracteres con mayúscula, minúscula y número) y el descriptor facial.',
+            error: 'La contraseña debe tener entre 12 y 128 caracteres e incluir mayúscula, minúscula y número.',
+        });
+        return;
+    }
+    if (!isFaceDescriptor(faceDescriptor)) {
+        res.status(400).json({
+            error: 'No se recibió una plantilla facial válida. Activa la cámara, captura el rostro y vuelve a intentarlo.',
         });
         return;
     }

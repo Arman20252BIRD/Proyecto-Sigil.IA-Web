@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import styles from "./page.module.css";
 
 type Status = "Activo" | "Atención" | "Sin conexión";
@@ -51,6 +51,17 @@ type DriverInput = {
   telefono: string;
   estatus_operativo: string;
 };
+type AdminProfile = {
+  id: number | string;
+  nombre: string;
+  email: string;
+  telefono_corporativo: string | null;
+  empresa: string | null;
+  mfa_facial_status: boolean;
+  totp_enabled: boolean;
+  updated_at: string;
+};
+type AdminProfileInput = Pick<AdminProfile, "nombre" | "email" | "telefono_corporativo" | "empresa">;
 type Modal = "driver" | "delete" | null;
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
@@ -154,6 +165,31 @@ async function fetchApiRecords<T>(path: string, isRecord: (value: unknown) => va
   return records;
 }
 
+function isAdminProfile(value: unknown): value is AdminProfile {
+  if (typeof value !== "object" || value === null) return false;
+  const record = value as Record<string, unknown>;
+  return (typeof record.id === "number" || typeof record.id === "string")
+    && typeof record.nombre === "string"
+    && typeof record.email === "string"
+    && (record.telefono_corporativo === null || typeof record.telefono_corporativo === "string")
+    && (record.empresa === null || typeof record.empresa === "string")
+    && typeof record.mfa_facial_status === "boolean"
+    && typeof record.totp_enabled === "boolean"
+    && typeof record.updated_at === "string";
+}
+
+async function fetchAdminProfile(): Promise<AdminProfile> {
+  const response = await fetchWithAuth(`${API_URL}/api/admin`);
+  const result: unknown = await response.json();
+  if (!response.ok) {
+    throw new Error(isApiError(result) ? result.error : `La API respondió HTTP ${response.status}.`);
+  }
+  if (!isAdminProfile(result)) {
+    throw new Error("La API devolvió un perfil de administrador no válido.");
+  }
+  return result;
+}
+
 export default function DashboardClient() {
   const router = useRouter();
   const [section, setSection] = useState("overview");
@@ -169,6 +205,15 @@ export default function DashboardClient() {
   const [isLoadingDrivers, setIsLoadingDrivers] = useState(true);
   const [isSavingDriver, setIsSavingDriver] = useState(false);
   const [lastUpdated, setLastUpdated] = useState("—");
+  const [adminProfile, setAdminProfile] = useState<AdminProfile | null>(null);
+  const [adminDraft, setAdminDraft] = useState<AdminProfileInput>({
+    nombre: "",
+    email: "",
+    telefono_corporativo: "",
+    empresa: "",
+  });
+  const [isLoadingAdminProfile, setIsLoadingAdminProfile] = useState(true);
+  const [isSavingAdminProfile, setIsSavingAdminProfile] = useState(false);
 
   const activeCount = useMemo(() => vehicles.filter((vehicle) => vehicle.status === "Activo").length, [vehicles]);
   const vehiclesWithGps = useMemo(() => vehicles.map((vehicle) => {
@@ -195,6 +240,23 @@ export default function DashboardClient() {
     setToast(message);
     window.setTimeout(() => setToast(""), 2800);
   }, []);
+  const loadAdminProfile = useCallback(async () => {
+    setIsLoadingAdminProfile(true);
+    try {
+      const profile = await fetchAdminProfile();
+      setAdminProfile(profile);
+      setAdminDraft({
+        nombre: profile.nombre,
+        email: profile.email,
+        telefono_corporativo: profile.telefono_corporativo ?? "",
+        empresa: profile.empresa ?? "",
+      });
+    } catch (error) {
+      showToast(`No se pudo cargar la cuenta: ${error instanceof Error ? error.message : "error desconocido"}`);
+    } finally {
+      setIsLoadingAdminProfile(false);
+    }
+  }, [showToast]);
   const loadDrivers = useCallback(async () => {
     setIsLoadingDrivers(true);
     try {
@@ -209,7 +271,7 @@ export default function DashboardClient() {
     }
   }, [showToast]);
   const refreshDashboard = useCallback(async () => {
-    await loadDrivers();
+    await Promise.all([loadDrivers(), loadAdminProfile()]);
     const [eventsResult, gpsResult] = await Promise.allSettled([
       fetchApiRecords("/api/dashboard/events", isEventRecord),
       fetchApiRecords("/api/dashboard/gps", isGpsRecord),
@@ -224,12 +286,34 @@ export default function DashboardClient() {
     } else {
       showToast(`No se pudieron cargar las posiciones GPS: ${gpsResult.reason instanceof Error ? gpsResult.reason.message : "error desconocido"}`);
     }
-  }, [loadDrivers, showToast]);
+  }, [loadAdminProfile, loadDrivers, showToast]);
   useEffect(() => {
     const handleSessionExpired = () => router.replace("/login");
     window.addEventListener("sigil-session-expired", handleSessionExpired);
     return () => window.removeEventListener("sigil-session-expired", handleSessionExpired);
   }, [router]);
+  useEffect(() => {
+    let active = true;
+    fetchAdminProfile().then((profile) => {
+      if (!active) return;
+      setAdminProfile(profile);
+      setAdminDraft({
+        nombre: profile.nombre,
+        email: profile.email,
+        telefono_corporativo: profile.telefono_corporativo ?? "",
+        empresa: profile.empresa ?? "",
+      });
+    }).catch((error: unknown) => {
+      if (active) {
+        showToast(`No se pudo cargar la cuenta: ${error instanceof Error ? error.message : "error desconocido"}`);
+      }
+    }).finally(() => {
+      if (active) setIsLoadingAdminProfile(false);
+    });
+    return () => {
+      active = false;
+    };
+  }, [showToast]);
   useEffect(() => {
     let active = true;
     fetchDrivers().then((loaded) => {
@@ -306,6 +390,37 @@ export default function DashboardClient() {
       setIsSavingDriver(false);
     }
   };
+  const saveAdminProfile = async (input: AdminProfileInput): Promise<boolean> => {
+    setIsSavingAdminProfile(true);
+    try {
+      const response = await fetchWithAuth(`${API_URL}/api/admin`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      });
+      const result: unknown = await response.json();
+      if (!response.ok) {
+        throw new Error(isApiError(result) ? result.error : `La API respondió HTTP ${response.status}.`);
+      }
+      if (typeof result !== "object" || result === null || !("admin" in result) || !isAdminProfile(result.admin)) {
+        throw new Error("La API devolvió un perfil actualizado no válido.");
+      }
+      setAdminProfile(result.admin);
+      setAdminDraft({
+        nombre: result.admin.nombre,
+        email: result.admin.email,
+        telefono_corporativo: result.admin.telefono_corporativo ?? "",
+        empresa: result.admin.empresa ?? "",
+      });
+      showToast("Datos de la cuenta actualizados.");
+      return true;
+    } catch (error) {
+      showToast(`No se pudo guardar la cuenta: ${error instanceof Error ? error.message : "error desconocido"}`);
+      return false;
+    } finally {
+      setIsSavingAdminProfile(false);
+    }
+  };
   const deleteDriver = async () => {
     if (!selected) return;
     try {
@@ -348,13 +463,13 @@ export default function DashboardClient() {
       <section className={styles.content}>
         <header className={styles.topbar}>
           <div><span className={styles.breadcrumb}>PANEL DE ADMINISTRACIÓN / {section === "fleet" ? "CONDUCTORES" : section === "admin" ? "CONFIGURACIÓN" : section === "support" ? "SOPORTE" : "RESUMEN"}</span><h1>{section === "fleet" ? "Gestión de conductores" : section === "admin" ? "Configuración de cuenta" : section === "support" ? "Soporte técnico" : "Supervisión telemática activa"}</h1></div>
-          <div className={styles.topActions}><span className={styles.updated}>Actualizado {lastUpdated}</span><button className={styles.refreshButton} onClick={() => { void refreshDashboard(); }}>↻ Actualizar</button><div className={styles.userBadge}><span>CM</span><div><strong>Administrador</strong><small>Control total</small></div></div></div>
+          <div className={styles.topActions}><span className={styles.updated}>Actualizado {lastUpdated}</span><button className={styles.refreshButton} onClick={() => { void refreshDashboard(); }}>↻ Actualizar</button><div className={styles.userBadge}><span>{adminProfile?.nombre.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase() ?? "—"}</span><div><strong>{adminProfile?.nombre ?? (isLoadingAdminProfile ? "Cargando cuenta…" : "Administrador")}</strong><small>{adminProfile?.empresa ?? "Administración"}</small></div></div></div>
         </header>
 
         <div className={styles.dashboard} id="overview">
           {section === "overview" && <SummaryPanel activeCount={activeCount} vehicleCount={vehicles.length} events={events} gpsCount={gpsRecords.length} onFleet={() => go("fleet")} />}
           {section === "fleet" && <><FleetPanel vehicles={filtered} search={search} selectedId={selected?.id ?? ""} isLoading={isLoadingDrivers} onSearch={setSearch} onAdd={() => { setEditing(null); setModal("driver"); }} onSelect={selectDriver} onEdit={(vehicle) => { setEditing(vehicle); setModal("driver"); }} onDelete={(vehicle) => { setSelected(vehicle); setModal("delete"); }} />{selectedWithGps && <DriverWorkspace vehicle={selectedWithGps} gps={selectedGps} events={events.filter((event) => String(event.driver_id) === selectedWithGps.backendId)} tab={driverTab} setTab={setDriverTab} onToast={showToast} />}</>}
-          {section === "admin" && <AdminSettings onToast={showToast} />}
+          {section === "admin" && <AdminSettings profile={adminProfile} draft={adminDraft} onDraftChange={setAdminDraft} isLoading={isLoadingAdminProfile} isSaving={isSavingAdminProfile} onSave={saveAdminProfile} />}
           {section === "support" && <SupportPanel onToast={showToast} />}
         </div>
       </section>
@@ -443,7 +558,66 @@ function DriverWorkspace({ vehicle, gps, events, tab, setTab, onToast }: { vehic
 
 function DetailCard({ title, value, detail }: { title: string; value: string; detail: string }) { return <article className={styles.detailCard}><span>{title}</span><strong>{value}</strong><small>{detail}</small></article>; }
 function EventTable({ events }: { events: EventRecord[] }) { return <div className={styles.eventList}>{events.length ? events.map((event) => <div className={styles.eventRow} key={String(event.id)}><i className={styles.resolvedDot} /><div><strong>Evento #{event.id}</strong><span>{new Date(event.created_at).toLocaleString("es-MX")} · {event.numero_flota ?? `Conductor ${event.driver_id}`}</span></div><code>{event.conductor_nombre}</code></div>) : <p>No hay eventos registrados para este conductor.</p>}</div>; }
-function AdminSettings({ onToast }: { onToast: (message: string) => void }) { return <section className={styles.adminSettings} id="admin"><div><span className={styles.sectionLabel}>01 / CUENTA DEL ADMINISTRADOR</span><h2>Configuración separada de la flota</h2><p>Gestiona tus datos, seguridad y preferencias sin mezclarlos con los conductores.</p></div><div className={styles.settingsGrid}><label>Nombre completo<input defaultValue="Carlos Méndez R." /></label><label>Correo corporativo<input defaultValue="admin@sigil.ia" type="email" /></label><label>Teléfono de recuperación<input defaultValue="+52 999 123 4567" type="tel" /></label><label>Zona horaria<input defaultValue="America/Mexico_City" /></label></div><div className={styles.settingsSecurity}><div><strong>Seguridad de cuenta</strong><span>MFA facial activo · última validación hoy</span></div><button className={styles.primaryButton} onClick={() => onToast("Cambios de configuración preparados para guardar.")}>Guardar configuración</button></div></section>; }
+function AdminSettings({
+  profile,
+  draft,
+  onDraftChange,
+  isLoading,
+  isSaving,
+  onSave,
+}: {
+  profile: AdminProfile | null;
+  draft: AdminProfileInput;
+  onDraftChange: (draft: AdminProfileInput) => void;
+  isLoading: boolean;
+  isSaving: boolean;
+  onSave: (input: AdminProfileInput) => Promise<boolean>;
+}) {
+  const updateField = (field: keyof AdminProfileInput, value: string) => {
+    onDraftChange({ ...draft, [field]: value });
+  };
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    await onSave({
+      ...draft,
+      nombre: draft.nombre.trim(),
+      email: draft.email.trim(),
+      telefono_corporativo: draft.telefono_corporativo?.trim() || null,
+      empresa: draft.empresa?.trim() || null,
+    });
+  };
+  const mfaStatus = profile?.mfa_facial_status
+    ? "Reconocimiento facial y TOTP activos"
+    : profile?.totp_enabled
+      ? "TOTP activo; reconocimiento facial no configurado"
+      : "La autenticación multifactor requiere configuración";
+
+  return (
+    <section className={styles.adminSettings} id="admin">
+      <div>
+        <span className={styles.sectionLabel}>01 / CUENTA DEL ADMINISTRADOR</span>
+        <h2>Datos de la cuenta</h2>
+        <p>Estos datos corresponden al administrador con el que iniciaste sesión; puedes actualizarlos aquí.</p>
+      </div>
+      {isLoading && <p role="status">Cargando los datos de la cuenta…</p>}
+      {!isLoading && !profile && <p role="alert">No fue posible obtener los datos de esta cuenta. Usa «Actualizar» para volver a intentarlo.</p>}
+      {profile && (
+        <form onSubmit={handleSubmit}>
+          <div className={styles.settingsGrid}>
+            <label>Nombre completo<input value={draft.nombre} onChange={(event) => updateField("nombre", event.target.value)} maxLength={120} required disabled={isSaving} /></label>
+            <label>Correo corporativo<input value={draft.email} onChange={(event) => updateField("email", event.target.value)} type="email" maxLength={254} required disabled={isSaving} /></label>
+            <label>Teléfono<input value={draft.telefono_corporativo ?? ""} onChange={(event) => updateField("telefono_corporativo", event.target.value)} type="tel" maxLength={30} disabled={isSaving} /></label>
+            <label>Empresa<input value={draft.empresa ?? ""} onChange={(event) => updateField("empresa", event.target.value)} maxLength={120} disabled={isSaving} /></label>
+          </div>
+          <div className={styles.settingsSecurity}>
+            <div><strong>Seguridad de cuenta</strong><span>{mfaStatus}</span></div>
+            <button className={styles.primaryButton} type="submit" disabled={isSaving}>{isSaving ? "Guardando…" : "Guardar configuración"}</button>
+          </div>
+        </form>
+      )}
+    </section>
+  );
+}
 function DriverModal({ editing, isSaving, onClose, onSave }: { editing: Vehicle | null; isSaving: boolean; onClose: () => void; onSave: (driver: DriverInput) => Promise<boolean> }) {
   return <Modal title={editing ? "Editar conductor" : "Alta de nuevo conductor"} onClose={onClose}>
     <form className={styles.modalForm} onSubmit={async (event) => {

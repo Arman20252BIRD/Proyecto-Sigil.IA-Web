@@ -70,6 +70,10 @@ app.post('/api/auth/verify-facial', authRateLimit, requireMfaSession, verifyFaci
 app.post('/api/auth/verify-totp', authRateLimit, requireMfaSession, verifyTotpMfa);
 
 // --- RUTAS DE ADMINISTRADOR ---
+app.get('/api/admin', requireAuth, getAdminProfile);
+app.put('/api/admin', requireAuth, updateAdminProfile);
+app.get('/api/admin/me', requireAuth, getAdminProfile);
+app.put('/api/admin/me', requireAuth, updateAdminProfile);
 app.get('/api/admin/:id', requireAuth, getAdminProfile);
 app.put('/api/admin/:id', requireAuth, updateAdminProfile);
 

@@ -23,7 +23,7 @@
    psql -U postgres -d sigil_db -f .\Sigil-backend\database\seed.sql
    ```
 
-   `admin@sigil.local` / `Admin123!` es una cuenta local de prueba. En el primer acceso exige configurar TOTP y permite enrolar una plantilla facial real. El seed no contiene un rostro de demostración.
+   `admin@sigil.local` / `Admin123!` es una cuenta local de prueba. En el primer acceso exige configurar TOTP y permite enrolar una plantilla facial real. El seed no contiene un rostro de demostración. También agrega cuatro conductores ficticios con vehículos, eventos y posiciones GPS para el dashboard; es seguro volver a ejecutarlo y no restablece la contraseña ni el MFA del administrador existente.
 4. Instala e inicia el backend:
 
    ```powershell
@@ -61,6 +61,8 @@
 | GET | `/api/dashboard/gps` | Consultar posición GPS |
 
 El descriptor facial nunca se retorna desde el backend. Las respuestas no contienen el secreto TOTP excepto en la URI de configuración entregada inmediatamente después de validar la contraseña. Los endpoints de setup/MFA requieren tokens temporales específicos.
+
+Las rutas de conductores validan los campos y estados operativos, rechazan identificadores inválidos y permiten asignar/desasignar un vehículo existente. Los errores de validación y referencias inexistentes se reportan como respuestas `4xx`.
 
 ## Postman
 

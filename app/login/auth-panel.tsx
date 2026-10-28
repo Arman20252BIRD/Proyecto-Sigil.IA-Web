@@ -11,6 +11,22 @@ type FaceState = "idle" | "camera" | "processing" | "captured";
 type Enrollment = { token: string; otpAuthUrl: string };
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
+type PasswordRequirements = {
+  length: boolean;
+  uppercase: boolean;
+  lowercase: boolean;
+  number: boolean;
+};
+
+function getPasswordRequirements(password: string): PasswordRequirements {
+  return {
+    length: password.length >= 12 && password.length <= 128,
+    uppercase: /\p{Lu}/u.test(password),
+    lowercase: /\p{Ll}/u.test(password),
+    number: /\p{N}/u.test(password),
+  };
+}
+
 type AuthResponse = {
   success?: boolean;
   message?: string;
@@ -38,8 +54,13 @@ export default function AuthPanel() {
   const [verificationMode, setVerificationMode] = useState<"face" | "totp">("face");
   const [otpCode, setOtpCode] = useState("");
   const [capturedFaceDescriptor, setCapturedFaceDescriptor] = useState<number[] | null>(null);
+  const [registrationPassword, setRegistrationPassword] = useState("");
+  const [registrationPasswordConfirm, setRegistrationPasswordConfirm] = useState("");
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const passwordRequirements = getPasswordRequirements(registrationPassword);
+  const passwordsMatch = registrationPassword.length > 0
+    && registrationPassword === registrationPasswordConfirm;
 
   useEffect(() => () => {
     streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -148,6 +169,21 @@ export default function AuthPanel() {
     const form = event.currentTarget;
     const formData = new FormData(form);
     const password = String(formData.get("password") ?? "");
+    const name = String(formData.get("name") ?? "").trim();
+    const email = String(formData.get("email") ?? "").trim();
+    if (name.length < 2 || name.length > 120) {
+      setNotice("El nombre debe tener entre 2 y 120 caracteres.");
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setNotice("Escribe un correo electrónico válido.");
+      return;
+    }
+    const requirements = getPasswordRequirements(password);
+    if (!requirements.length || !requirements.uppercase || !requirements.lowercase || !requirements.number) {
+      setNotice("Completa los requisitos indicados debajo del campo de contraseña.");
+      return;
+    }
     if (password !== formData.get("confirm")) {
       setNotice("Las contraseñas no coinciden.");
       return;
@@ -166,9 +202,9 @@ export default function AuthPanel() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          nombre: formData.get("name"),
+          nombre: name,
           empresa: formData.get("company"),
-          email: formData.get("email"),
+          email,
           telefono_corporativo: formData.get("phone"),
           password,
           faceDescriptor,
@@ -315,6 +351,8 @@ export default function AuthPanel() {
     setMfaToken("");
     setSetupEnrollment(null);
     setOtpCode("");
+    setRegistrationPassword("");
+    setRegistrationPasswordConfirm("");
     setNotice("");
   }
 
@@ -327,6 +365,8 @@ export default function AuthPanel() {
     setSetupEnrollment(null);
     setMfaToken("");
     setOtpCode("");
+    setRegistrationPassword("");
+    setRegistrationPasswordConfirm("");
     setNotice("");
   }
 
@@ -444,9 +484,32 @@ export default function AuthPanel() {
             <Field label="Empresa" name="company" placeholder="Nombre de la empresa" />
             <Field label="Correo corporativo" name="email" type="email" placeholder="admin@empresa.com" />
             <Field label="Teléfono" name="phone" type="tel" placeholder="+52 000 000 0000" />
-            <Field label="Contraseña" name="password" type="password" placeholder="Mínimo 12 caracteres, mayúscula y número" />
-            <Field label="Confirmar contraseña" name="confirm" type="password" placeholder="Repite la contraseña" />
+            <Field
+              label="Contraseña"
+              name="password"
+              type="password"
+              placeholder="Escribe una contraseña segura"
+              autoComplete="new-password"
+              maxLength={128}
+              onValueChange={setRegistrationPassword}
+            />
+            <Field
+              label="Confirmar contraseña"
+              name="confirm"
+              type="password"
+              placeholder="Repite la contraseña"
+              autoComplete="new-password"
+              maxLength={128}
+              onValueChange={setRegistrationPasswordConfirm}
+            />
           </div>
+          <ul className={styles.passwordRequirements} aria-label="Requisitos de la contraseña" aria-live="polite">
+            <PasswordRequirement met={passwordRequirements.length}>Entre 12 y 128 caracteres</PasswordRequirement>
+            <PasswordRequirement met={passwordRequirements.uppercase}>Al menos una letra mayúscula</PasswordRequirement>
+            <PasswordRequirement met={passwordRequirements.lowercase}>Al menos una letra minúscula</PasswordRequirement>
+            <PasswordRequirement met={passwordRequirements.number}>Al menos un número</PasswordRequirement>
+            <PasswordRequirement met={passwordsMatch}>Las contraseñas coinciden</PasswordRequirement>
+          </ul>
           <FaceEnroll
             onStart={startCamera}
             onCapture={captureEnrollmentFace}
@@ -474,8 +537,49 @@ function FormHeader({ step, title, text }: { step: string; title: string; text: 
   return <div className={styles.formHeader}><span>{step}</span><h2>{title}</h2><p>{text}</p></div>;
 }
 
-function Field({ label, name, type = "text", placeholder }: { label: string; name: string; type?: string; placeholder: string }) {
-  return <label className={styles.field}><span>{label}</span><input name={name} type={type} placeholder={placeholder} required /></label>;
+function Field({
+  label,
+  name,
+  type = "text",
+  placeholder,
+  autoComplete,
+  maxLength,
+  onValueChange,
+}: {
+  label: string;
+  name: string;
+  type?: string;
+  placeholder: string;
+  autoComplete?: string;
+  maxLength?: number;
+  onValueChange?: (value: string) => void;
+}) {
+  return (
+    <label className={styles.field}>
+      <span>{label}</span>
+      <input
+        name={name}
+        type={type}
+        placeholder={placeholder}
+        autoComplete={autoComplete}
+        maxLength={maxLength}
+        onChange={onValueChange ? (event) => onValueChange(event.target.value) : undefined}
+        required
+      />
+    </label>
+  );
+}
+
+function PasswordRequirement({ met, children }: { met: boolean; children: string }) {
+  return (
+    <li
+      className={met ? styles.passwordRequirementMet : styles.passwordRequirementPending}
+      aria-label={`${children}: ${met ? "cumplido" : "pendiente"}`}
+    >
+      <span aria-hidden="true">{met ? "✓" : "○"}</span>
+      {children}
+    </li>
+  );
 }
 
 function CameraFrame({ videoRef, faceState }: { videoRef: React.RefObject<HTMLVideoElement | null>; faceState: FaceState }) {

@@ -2,57 +2,195 @@
 import { Request, Response } from 'express';
 import { pool } from '../config/db';
 
-// CREATE: Registrar un nuevo conductor
+const operationalStatuses = new Set(['En ruta', 'Atención', 'Sin conexión']);
+const driverFields = new Set(['nombre', 'email', 'telefono', 'estatus_operativo', 'vehicle_id']);
+
+type DriverInput = {
+    nombre?: string;
+    email?: string | null;
+    telefono?: string | null;
+    estatus_operativo?: string;
+    vehicle_id?: number | null;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function hasOwn(value: Record<string, unknown>, key: string): boolean {
+    return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function parseDriverInput(value: unknown, partial = false): { input?: DriverInput; error?: string } {
+    if (!isRecord(value)) return { error: 'El cuerpo de la solicitud debe ser un objeto JSON.' };
+    if (Object.keys(value).some((key) => !driverFields.has(key))) {
+        return { error: 'La solicitud contiene campos no permitidos.' };
+    }
+
+    const input: DriverInput = {};
+    if (!partial || hasOwn(value, 'nombre')) {
+        if (typeof value.nombre !== 'string' || value.nombre.trim().length < 2 || value.nombre.trim().length > 120) {
+            return { error: 'El nombre debe tener entre 2 y 120 caracteres.' };
+        }
+        input.nombre = value.nombre.trim();
+    }
+
+    if (!partial || hasOwn(value, 'email')) {
+        if (value.email === null || value.email === undefined
+            || (typeof value.email === 'string' && value.email.trim() === '')) {
+            input.email = null;
+        } else if (typeof value.email !== 'string' || value.email.trim().length > 254
+            || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.email.trim())) {
+            return { error: 'Proporciona un correo electrónico válido.' };
+        } else {
+            input.email = value.email.trim().toLowerCase();
+        }
+    }
+
+    if (!partial || hasOwn(value, 'telefono')) {
+        if (value.telefono === null || value.telefono === undefined
+            || (typeof value.telefono === 'string' && value.telefono.trim() === '')) {
+            input.telefono = null;
+        } else if (typeof value.telefono !== 'string' || value.telefono.trim().length > 30) {
+            return { error: 'El teléfono debe tener como máximo 30 caracteres.' };
+        } else {
+            input.telefono = value.telefono.trim();
+        }
+    }
+
+    if (!partial || hasOwn(value, 'estatus_operativo')) {
+        if (!partial && value.estatus_operativo === undefined) {
+            input.estatus_operativo = 'En ruta';
+        } else if (typeof value.estatus_operativo !== 'string' || !operationalStatuses.has(value.estatus_operativo)) {
+            return { error: 'El estado debe ser En ruta, Atención o Sin conexión.' };
+        } else {
+            input.estatus_operativo = value.estatus_operativo;
+        }
+    }
+
+    if (hasOwn(value, 'vehicle_id')) {
+        if (value.vehicle_id === null) {
+            input.vehicle_id = null;
+        } else if ((typeof value.vehicle_id !== 'number' && typeof value.vehicle_id !== 'string')
+            || !/^\d+$/.test(String(value.vehicle_id))
+            || !Number.isSafeInteger(Number(value.vehicle_id))
+            || Number(value.vehicle_id) < 1) {
+            return { error: 'vehicle_id debe ser un identificador entero positivo o null.' };
+        } else {
+            input.vehicle_id = Number(value.vehicle_id);
+        }
+    }
+
+    if (partial && Object.keys(value).length === 0) {
+        return { error: 'Indica al menos un campo para actualizar.' };
+    }
+    return { input };
+}
+
+function parseDriverId(value: unknown): number | null {
+    if (typeof value !== 'string') return null;
+    if (!/^\d+$/.test(value)) return null;
+    const id = Number(value);
+    return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
+function sendDatabaseError(error: unknown, res: Response, action: string): void {
+    if (typeof error === 'object' && error !== null && 'code' in error) {
+        const code = error.code;
+        if (code === '23503') {
+            res.status(400).json({ error: 'El vehículo indicado no existe.' });
+            return;
+        }
+        if (code === '23505') {
+            res.status(409).json({ error: 'Ya existe un registro con esos datos.' });
+            return;
+        }
+    }
+    console.error(`Error al ${action} conductor:`, error);
+    res.status(500).json({ error: `No se pudo ${action} el conductor. Intenta de nuevo más tarde.` });
+}
+
 export const createDriver = async (req: Request, res: Response): Promise<void> => {
+    const parsed = parseDriverInput(req.body);
+    if (!parsed.input) {
+        res.status(400).json({ error: parsed.error });
+        return;
+    }
+
+    const { nombre, email, telefono, estatus_operativo } = parsed.input;
     try {
-        const { nombre, email, telefono, estatus_operativo, vehicle_id } = req.body;
-        const query = `
-            INSERT INTO drivers (nombre, email, telefono, estatus_operativo, vehicle_id)
-            VALUES ($1, $2, $3, $4, $5)
-            RETURNING *;
-        `;
-        const values = [nombre, email, telefono, estatus_operativo || 'En ruta', vehicle_id];
-        const newDriver = await pool.query(query, values);
-        
+        const newDriver = await pool.query(
+            `WITH inserted AS (
+                INSERT INTO drivers (nombre, email, telefono, estatus_operativo, vehicle_id)
+                VALUES ($1, $2, $3, $4, $5)
+                RETURNING *
+            )
+            SELECT i.*, v.numero_flota, v.modelo, v.placas, v.hardware_id
+            FROM inserted i
+            LEFT JOIN vehicles v ON v.id = i.vehicle_id`,
+            [nombre, email, telefono, estatus_operativo, parsed.input.vehicle_id ?? null]
+        );
         res.status(201).json(newDriver.rows[0]);
     } catch (error) {
-        res.status(500).json({ error: 'Error al crear el conductor' });
+        sendDatabaseError(error, res, 'crear');
     }
 };
 
-// READ: Obtener todos los conductores con sus vehículos asignados
 export const getDrivers = async (req: Request, res: Response): Promise<void> => {
     try {
         const query = `
-            SELECT d.*, v.numero_flota, v.modelo, v.placas, v.hardware_id 
+            SELECT d.*, v.numero_flota, v.modelo, v.placas, v.hardware_id
             FROM drivers d
-            LEFT JOIN vehicles v ON d.vehicle_id = v.id;
+            LEFT JOIN vehicles v ON d.vehicle_id = v.id
+            ORDER BY d.id;
         `;
         const result = await pool.query(query);
         res.json(result.rows);
     } catch (error) {
-        res.status(500).json({ error: 'Error al obtener los conductores' });
+        console.error('Error al obtener conductores:', error);
+        res.status(500).json({ error: 'No se pudieron obtener los conductores. Intenta de nuevo más tarde.' });
     }
 };
 
-// UPDATE: Actualizar información del conductor
 export const updateDriver = async (req: Request, res: Response): Promise<void> => {
+    const id = parseDriverId(req.params.id);
+    if (id === null) {
+        res.status(400).json({ error: 'El identificador del conductor no es válido.' });
+        return;
+    }
+    const parsed = parseDriverInput(req.body, true);
+    if (!parsed.input) {
+        res.status(400).json({ error: parsed.error });
+        return;
+    }
+
+    const columnNames: Record<keyof DriverInput, string> = {
+        nombre: 'nombre',
+        email: 'email',
+        telefono: 'telefono',
+        estatus_operativo: 'estatus_operativo',
+        vehicle_id: 'vehicle_id',
+    };
+    const assignments: string[] = [];
+    const values: unknown[] = [];
+    for (const [field, value] of Object.entries(parsed.input) as [keyof DriverInput, DriverInput[keyof DriverInput]][]) {
+        values.push(value);
+        assignments.push(`${columnNames[field]} = $${values.length}`);
+    }
+    values.push(id);
+
     try {
-        const { id } = req.params;
-        const { nombre, email, telefono, estatus_operativo, vehicle_id } = req.body;
-        
-        const query = `
-            UPDATE drivers 
-            SET nombre = COALESCE($1, nombre),
-                email = COALESCE($2, email),
-                telefono = COALESCE($3, telefono),
-                estatus_operativo = COALESCE($4, estatus_operativo),
-                vehicle_id = COALESCE($5, vehicle_id)
-            WHERE id = $6
-            RETURNING *;
-        `;
-        const values = [nombre, email, telefono, estatus_operativo, vehicle_id, id];
-        const updated = await pool.query(query, values);
+        const updated = await pool.query(
+            `WITH changed AS (
+                UPDATE drivers SET ${assignments.join(', ')}
+                WHERE id = $${values.length}
+                RETURNING *
+            )
+            SELECT c.*, v.numero_flota, v.modelo, v.placas, v.hardware_id
+            FROM changed c
+            LEFT JOIN vehicles v ON v.id = c.vehicle_id`,
+            values
+        );
 
         if (updated.rows.length === 0) {
             res.status(404).json({ error: 'Conductor no encontrado' });
@@ -61,14 +199,18 @@ export const updateDriver = async (req: Request, res: Response): Promise<void> =
 
         res.json(updated.rows[0]);
     } catch (error) {
-        res.status(500).json({ error: 'Error al actualizar el conductor' });
+        sendDatabaseError(error, res, 'actualizar');
     }
 };
 
-// DELETE: Eliminar un conductor
 export const deleteDriver = async (req: Request, res: Response): Promise<void> => {
+    const id = parseDriverId(req.params.id);
+    if (id === null) {
+        res.status(400).json({ error: 'El identificador del conductor no es válido.' });
+        return;
+    }
+
     try {
-        const { id } = req.params;
         const result = await pool.query('DELETE FROM drivers WHERE id = $1 RETURNING *;', [id]);
 
         if (result.rows.length === 0) {
@@ -78,6 +220,6 @@ export const deleteDriver = async (req: Request, res: Response): Promise<void> =
 
         res.json({ message: 'Conductor eliminado correctamente' });
     } catch (error) {
-        res.status(500).json({ error: 'Error al eliminar el conductor' });
+        sendDatabaseError(error, res, 'eliminar');
     }
 };

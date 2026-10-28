@@ -1,0 +1,237 @@
+{
+  "info": {
+    "_postman_id": "d51a7a5a-b457-4ee5-9640-019b67ef514d",
+    "name": "Sigil.IA API - MFA facial y TOTP",
+    "description": "Health, login, TOTP de respaldo y rutas protegidas. La cámara/modelos faciales deben probarse desde /login; Postman no genera una muestra biométrica genuina.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:4000" },
+    { "key": "adminEmail", "value": "admin@sigil.local" },
+    { "key": "adminPassword", "value": "Admin123!" },
+    { "key": "otpCode", "value": "000000" },
+    { "key": "setupToken", "value": "" },
+    { "key": "mfaToken", "value": "" },
+    { "key": "accessToken", "value": "" },
+    { "key": "otpAuthUrl", "value": "" },
+    { "key": "adminId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "1. Salud de API y PostgreSQL",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/api/health"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('API y PostgreSQL disponibles', function () {",
+              "  pm.response.to.have.status(200);",
+              "  pm.expect(pm.response.json().database).to.eql('connected');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Login de administrador (primer paso)",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{adminEmail}}\",\n  \"password\": \"{{adminPassword}}\"\n}"
+        },
+        "url": "{{baseUrl}}/api/auth/login-step1"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Contraseña aceptada y MFA requerido', function () {",
+              "  pm.response.to.have.status(200);",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.success).to.eql(true);",
+              "  pm.collectionVariables.set('adminId', body.admin.id);",
+              "  if (body.enrollmentRequired) {",
+              "    pm.collectionVariables.set('setupToken', body.setupToken);",
+              "    pm.collectionVariables.set('otpAuthUrl', body.otpAuthUrl);",
+              "  } else {",
+              "    pm.collectionVariables.set('mfaToken', body.mfaToken);",
+              "  }",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Configurar TOTP inicial (solo primera vez)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{setupToken}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"otpCode\": \"{{otpCode}}\"\n}"
+        },
+        "url": "{{baseUrl}}/api/auth/setup-mfa"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('TOTP queda configurado', function () {",
+              "  pm.response.to.have.status(200);",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.success).to.eql(true);",
+              "  pm.collectionVariables.set('accessToken', body.token);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Login para recibir token MFA",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{adminEmail}}\",\n  \"password\": \"{{adminPassword}}\"\n}"
+        },
+        "url": "{{baseUrl}}/api/auth/login-step1"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Se emite únicamente un token temporal MFA', function () {",
+              "  pm.response.to.have.status(200);",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.mfaToken).to.be.a('string');",
+              "  pm.expect(body).to.not.have.property('token');",
+              "  pm.collectionVariables.set('mfaToken', body.mfaToken);",
+              "  pm.collectionVariables.set('adminId', body.admin.id);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Verificar TOTP (alternativa al rostro)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{mfaToken}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"otpCode\": \"{{otpCode}}\"\n}"
+        },
+        "url": "{{baseUrl}}/api/auth/verify-totp"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('TOTP consume el token MFA y entrega acceso', function () {",
+              "  pm.response.to.have.status(200);",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.success).to.eql(true);",
+              "  pm.collectionVariables.set('accessToken', body.token);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Perfil protegido",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+        "url": "{{baseUrl}}/api/admin/{{adminId}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Perfil sin contraseña ni plantilla facial', function () {",
+              "  pm.response.to.have.status(200);",
+              "  const body = pm.response.json();",
+              "  pm.expect(body).to.not.have.property('password');",
+              "  pm.expect(body).to.not.have.property('face_template_encrypted');",
+              "  pm.expect(body).to.not.have.property('totp_secret_encrypted');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. Conductores protegidos",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+        "url": "{{baseUrl}}/api/drivers"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Token de acceso permite consultar conductores', function () {",
+              "  pm.response.to.have.status(200);",
+              "  pm.expect(pm.response.json()).to.be.an('array');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "8. Rechazar API protegida sin token",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/api/drivers"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('La API bloquea solicitudes sin autenticación', function () {",
+              "  pm.response.to.have.status(401);",
+              "});"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

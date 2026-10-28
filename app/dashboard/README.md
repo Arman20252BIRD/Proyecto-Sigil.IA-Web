@@ -1,4 +1,4 @@
-# Dashboard de administracion
+# Dashboard de administración
 
 ## Ruta
 
@@ -6,28 +6,28 @@
 
 ## Organizacion del panel
 
-- **Resumen:** vista independiente con metricas generales, grafica de actividad, alertas abiertas, alertas resueltas y registro historico.
-- **Conductores ESP32:** CRUD visual de conductores y dispositivos. Permite buscar por ID o nombre, dar de alta, editar, consultar y eliminar registros.
+- **Resumen:** consulta conductores, eventos y posiciones GPS del backend. Las métricas, actividad reciente y gráfica de los siete días alrededor del evento más reciente reflejan PostgreSQL.
+- **Conductores:** lista y búsqueda de los conductores guardados en PostgreSQL. Las altas, modificaciones y eliminaciones usan las rutas CRUD del backend.
 - **Detalle del conductor:** al seleccionar una unidad se muestran sus apartados independientes:
-  - **Resumen:** estado del ESP32, ultima senal y ubicacion reportada.
-  - **Alertas:** eventos en proceso y resueltos, con accion para cambiar su estado.
-  - **GPS:** ultima ubicacion y espacio preparado para integrar el mapa real.
-  - **Contactar:** canal de contacto directo asociado al conductor.
-  - **Logs y registros:** historial de eventos, origen, fecha y resultado.
-- **Configuracion admin:** perfil, correo corporativo, telefono, zona horaria y seguridad de la cuenta. Esta separado de la gestion de conductores.
+  - **Resumen:** estado y datos de GPS/eventos recibidos del backend.
+  - **Eventos y logs:** historial consultado desde PostgreSQL.
+  - **GPS:** última posición registrada para el vehículo asociado.
+  - **Contactar:** muestra el teléfono del registro del conductor.
+- **Configuración admin:** interfaz visual separada de la gestión de conductores.
 - **Soporte tecnico:** incidencias, documentacion operativa y contacto para la web, sensores y dispositivos ESP32.
 
-## Acciones del frontend
+## Integración disponible
 
-- La busqueda filtra conductores por ID o nombre.
-- Una alerta en proceso marca la fila del conductor en rojo, ilumina su indicador y muestra la etiqueta `Alerta activa`.
-- El ID o nombre del conductor es seleccionable: al hacer clic, el detalle se despliega/enfoca debajo de la tabla.
-- `Ver` abre el detalle del conductor y sus modulos.
-- `Editar`, `Alta de conductor` y `Eliminar` representan el flujo CRUD.
-- Las alertas se pueden marcar como **En proceso** o **Resuelta**.
-- `Actualizar`, `Contactar` y `Guardar cambios` muestran confirmacion visual.
-- `Cerrar sesion` regresa a `/login`.
+- Al abrir o actualizar el dashboard, se leen `/api/drivers`, `/api/dashboard/events` y `/api/dashboard/gps`.
+- Las lecturas y cambios requieren el token de acceso emitido después del login y segundo factor demo; al expirar se cierra la sesión y se vuelve a `/login`.
+- `Alta de conductor`, `Editar` y `Eliminar` persisten los cambios mediante `/api/drivers` y `/api/drivers/:id`.
+- Las últimas posiciones GPS se enlazan a los conductores con vehículo asignado; los eventos recientes vienen del endpoint de eventos.
+- Los errores de red o del API se muestran en el dashboard; no se sustituyen con datos de demostración.
+- El identificador de conductor lo genera PostgreSQL. Vehículo y hardware ESP32 aparecen como no asignados hasta asociar un vehículo.
+- `Cerrar sesión` elimina el token de la sesión de la pestaña y regresa a `/login`.
 
-## Integracion pendiente
+## Límites actuales
 
-Los registros actuales son datos de demostracion administrados en el estado local del frontend. El backend debera conectar autenticacion, permisos, base de datos, GPS, telemetria ESP32, bitacora de auditoria, telefono y MFA biometrico antes de ejecutar acciones reales.
+- El backend no ofrece rutas para asignar vehículos, cambiar el estado de eventos, ni actualizar el perfil del administrador; esas pantallas no persisten en PostgreSQL.
+- Los eventos solo incluyen el registro temporal y el conductor asociado; aún no almacenan tipo, severidad ni estado de resolución.
+- El MFA compara muestras matemáticas de luminancia; no es reconocimiento facial real ni debe usarse como seguridad en producción.

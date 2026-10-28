@@ -25,6 +25,7 @@
 4. Para crear una cuenta nueva, abre **Crear cuenta**. La lista bajo la contraseña marca en tiempo real los requisitos cumplidos: 12–128 caracteres, al menos una mayúscula, una minúscula y un número; también confirma si ambas contraseñas coinciden. Se aceptan letras acentuadas. Acepta el consentimiento biométrico, activa la cámara, centra el rostro, completa el reto de parpadeo y registra la cuenta. La página indica por separado si el problema está en el nombre, correo, contraseña o captura facial.
 5. Escanea el QR de TOTP y confirma el código de seis dígitos. Al finalizar, se inicia la sesión.
 6. En próximos accesos, elige reconocimiento facial o **Usar código autenticador en su lugar**.
+7. Si olvidaste tu contraseña, selecciona **¿Olvidaste tu contraseña?**, escribe el correo de la cuenta y el código vigente de seis dígitos de la aplicación autenticadora. Tras verificarlo, establece una contraseña nueva (12–128 caracteres, con mayúscula, minúscula y número); se guarda en PostgreSQL y el código no puede reutilizarse.
 
 Los modelos necesarios ya están en `public/models/`; el navegador no descarga modelos desde un CDN. En el primer uso se descargan desde el mismo servidor y quedan en caché local del navegador.
 

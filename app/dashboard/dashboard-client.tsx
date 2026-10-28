@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { captureFacePhoto } from "../login/face-recognition";
 import styles from "./page.module.css";
+import mapStyles from "./driver-map.module.css";
 import { Preferences } from "../preferences";
 
 type Status = "Activo" | "Inactivo";
@@ -110,11 +111,30 @@ function isGpsRecord(value: unknown): value is GpsRecord {
   const record = value as Record<string, unknown>;
   return (typeof record.vehicle_id === "number" || typeof record.vehicle_id === "string")
     && typeof record.timestamp === "string"
-    && (record.latitude === null || typeof record.latitude === "number")
-    && (record.longitude === null || typeof record.longitude === "number")
+    && (record.latitude === null || (typeof record.latitude === "number" && Number.isFinite(record.latitude) && record.latitude >= -90 && record.latitude <= 90))
+    && (record.longitude === null || (typeof record.longitude === "number" && Number.isFinite(record.longitude) && record.longitude >= -180 && record.longitude <= 180))
     && (record.numero_flota == null || typeof record.numero_flota === "string")
     && (record.placas == null || typeof record.placas === "string")
     && (record.conductor_nombre == null || typeof record.conductor_nombre === "string");
+}
+
+function getOpenStreetMapUrls(latitude: number, longitude: number) {
+  const mapBounds = [
+    longitude - 0.01,
+    latitude - 0.01,
+    longitude + 0.01,
+    latitude + 0.01,
+  ].join(",");
+  const embedParams = new URLSearchParams({
+    bbox: mapBounds,
+    layer: "mapnik",
+    marker: `${latitude},${longitude}`,
+  });
+  const mapParams = new URLSearchParams({ mlat: String(latitude), mlon: String(longitude), zoom: "16" });
+  return {
+    embed: `https://www.openstreetmap.org/export/embed.html?${embedParams.toString()}`,
+    link: `https://www.openstreetmap.org/?${mapParams.toString()}`,
+  };
 }
 
 function isApiError(value: unknown): value is { error: string } {
@@ -486,7 +506,7 @@ export default function DashboardClient() {
         <div className={styles.dashboard} id="overview">
           {section === "overview" && <SummaryPanel activeCount={activeCount} vehicleCount={vehicles.length} events={events} gpsCount={gpsRecords.length} onFleet={() => go("fleet")} />}
           {section === "fleet" && <><FleetPanel vehicles={filtered} search={search} selectedId={selected?.id ?? ""} isLoading={isLoadingDrivers} onSearch={setSearch} onAdd={() => { setEditing(null); setModal("driver"); }} onSelect={selectDriver} onEdit={(vehicle) => { setEditing(vehicle); setModal("driver"); }} onDelete={(vehicle) => { setSelected(vehicle); setModal("delete"); }} />{selectedWithGps && <DriverWorkspace vehicle={selectedWithGps} gps={selectedGps} events={events.filter((event) => String(event.driver_id) === selectedWithGps.backendId)} tab={driverTab} setTab={setDriverTab} onToast={showToast} />}</>}
-          {section === "admin" && <AdminSettings profile={adminProfile} draft={adminDraft} onDraftChange={setAdminDraft} isLoading={isLoadingAdminProfile} isSaving={isSavingAdminProfile} onSave={saveAdminProfile} />}
+          {section === "admin" && <AdminSettings profile={adminProfile} draft={adminDraft} onDraftChange={setAdminDraft} isLoading={isLoadingAdminProfile} isSaving={isSavingAdminProfile} onSave={saveAdminProfile} onRetry={loadAdminProfile} />}
           {section === "support" && <SupportPanel onToast={showToast} />}
         </div>
       </section>
@@ -607,11 +627,33 @@ function DriverWorkspace({ vehicle, gps, events, tab, setTab, onToast }: { vehic
     <nav className={styles.detailTabs} aria-label="Detalle del conductor">{[["resumen", "Resumen"], ["events", "Eventos"], ["gps", "GPS"], ["contact", "Contactar"], ["logs", "Logs y registros"]].map(([id, label]) => <button key={id} className={tab === id ? styles.detailTabActive : styles.detailTab} onClick={() => setTab(id)}>{label}</button>)}</nav>
     {tab === "resumen" && <div className={styles.detailGrid}><DetailCard title="Estado" value={vehicle.status} detail="Estado operativo del conductor" /><DetailCard title="Último evento" value={latestEvent ? `Evento #${latestEvent.id}` : "Sin eventos"} detail={latestEvent ? new Date(latestEvent.created_at).toLocaleString("es-MX") : "Sin actividad registrada"} /><DetailCard title="Última posición GPS" value={coordinates} detail={gps ? new Date(gps.timestamp).toLocaleString("es-MX") : "Sin datos GPS asociados"} /></div>}
     {tab === "events" && <EventTable events={events} />}
-    {tab === "gps" && <div className={styles.driverMap}><div className={styles.mapGrid} /><div className={styles.driverPin}>● {vehicle.id}</div><p>{gps ? `Última posición recibida: ${coordinates} · ${new Date(gps.timestamp).toLocaleString("es-MX")}` : "No hay posiciones GPS registradas para este vehículo."}</p></div>}
+    {tab === "gps" && <div className={styles.driverMap}><DriverGpsMap vehicle={vehicle} gps={gps} /></div>}
     {tab === "contact" && <div className={styles.contactModule}><div className={styles.contactInfo}><span className={styles.contactAvatar}>{vehicle.driver.split(" ").map((name) => name[0]).slice(0, 2).join("")}</span><div><h3>Contactar al conductor</h3><p>{vehicle.driver} · {vehicle.phone || "Sin teléfono registrado."}</p></div></div><button className={styles.primaryButton} disabled={!vehicle.phone} onClick={() => setContactOpen(true)}>Contactar conductor</button></div>}
     {contactOpen && vehicle.phone && <Modal title="Contactar al conductor" onClose={() => setContactOpen(false)}><div className={styles.callDialog}><span className={styles.contactAvatar}>{vehicle.driver.split(" ").map((name) => name[0]).slice(0, 2).join("")}</span><h3>{vehicle.driver}</h3><p>{vehicle.phone}</p><small>Se abrirá la aplicación de llamadas disponible en este equipo.</small><a className={styles.primaryButton} href={`tel:${vehicle.phone}`}>Llamar ahora</a></div></Modal>}
     {tab === "logs" && <EventTable events={events} />}
   </section>;
+}
+
+function DriverGpsMap({ vehicle, gps }: { vehicle: Vehicle; gps: GpsRecord | null }) {
+  if (!gps) return <p>No hay posiciones GPS registradas para este vehículo.</p>;
+  if (gps.latitude === null || gps.longitude === null) return <p>La posición GPS no contiene coordenadas válidas.</p>;
+
+  const coordinates = `${gps.latitude.toFixed(4)}, ${gps.longitude.toFixed(4)}`;
+  const map = getOpenStreetMapUrls(gps.latitude, gps.longitude);
+  return <>
+    <div className={mapStyles.mapFrame}>
+      <iframe
+        src={map.embed}
+        title={`Ubicación GPS de ${vehicle.driver} (${vehicle.id})`}
+        loading="lazy"
+        referrerPolicy="no-referrer"
+      />
+    </div>
+    <div className={mapStyles.mapDetails}>
+      <p>Ubicación simulada: {coordinates} · {new Date(gps.timestamp).toLocaleString("es-MX")}</p>
+      <a href={map.link} target="_blank" rel="noreferrer">Abrir en OpenStreetMap</a>
+    </div>
+  </>;
 }
 
 function DetailCard({ title, value, detail }: { title: string; value: string; detail: string }) { return <article className={styles.detailCard}><span>{title}</span><strong>{value}</strong><small>{detail}</small></article>; }
@@ -623,6 +665,7 @@ function AdminSettings({
   isLoading,
   isSaving,
   onSave,
+  onRetry,
 }: {
   profile: AdminProfile | null;
   draft: AdminProfileInput;
@@ -630,6 +673,7 @@ function AdminSettings({
   isLoading: boolean;
   isSaving: boolean;
   onSave: (input: AdminProfileInput) => Promise<boolean>;
+  onRetry: () => Promise<void>;
 }) {
   const photoVideoRef = useRef<HTMLVideoElement>(null);
   const photoStreamRef = useRef<MediaStream | null>(null);
@@ -705,7 +749,7 @@ function AdminSettings({
         <p>Puedes actualizar tus datos aquí.</p>
       </div>
       {isLoading && <p role="status">Cargando los datos de la cuenta…</p>}
-      {!isLoading && !profile && <p role="alert">No fue posible obtener los datos de esta cuenta. Usa «Actualizar» para volver a intentarlo.</p>}
+      {!isLoading && !profile && <div role="alert"><p>No fue posible obtener los datos de esta cuenta. Usa «Actualizar» para volver a intentarlo.</p><button className={styles.primaryButton} type="button" onClick={() => void onRetry()}>Actualizar</button></div>}
       {profile && (
         <form onSubmit={handleSubmit}>
           <div className={styles.settingsGrid}>

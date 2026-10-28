@@ -1,0 +1,51 @@
+.mapFrame {
+  overflow: hidden;
+  min-height: 360px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #eef2ff;
+}
+
+.mapFrame iframe {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  min-height: 360px;
+  border: 0;
+}
+
+.mapDetails {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 12px;
+}
+
+.mapDetails p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.mapDetails a {
+  flex: 0 0 auto;
+  color: var(--blue);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+@media (max-width: 720px) {
+  .mapFrame,
+  .mapFrame iframe {
+    min-height: 280px;
+  }
+
+  .mapDetails {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

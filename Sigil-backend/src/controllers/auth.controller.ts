@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Request, Response } from 'express';
+import type { PoolClient } from 'pg';
 import bcrypt from 'bcryptjs';
 import { generateSecret, generateURI, verify } from 'otplib';
 import { pool } from '../config/db';
@@ -526,6 +527,21 @@ const validPassword = (password: unknown): password is string =>
     typeof password === 'string' && password.length >= 12 && password.length <= 128
     && /\p{Lu}/u.test(password) && /\p{Ll}/u.test(password) && /\p{N}/u.test(password);
 
+async function recordPasswordResetTotpFailure(client: PoolClient, adminId: string | number): Promise<void> {
+    await client.query(
+        `UPDATE admins
+         SET mfa_failed_attempts = mfa_failed_attempts + 1,
+             mfa_locked_until = CASE
+                 WHEN mfa_failed_attempts + 1 >= 5 THEN NOW() + INTERVAL '15 minutes'
+                 ELSE mfa_locked_until
+             END,
+             mfa_nonce = CASE WHEN mfa_failed_attempts + 1 >= 5 THEN NULL ELSE mfa_nonce END,
+             mfa_setup_expires_at = CASE WHEN mfa_failed_attempts + 1 >= 5 THEN NULL ELSE mfa_setup_expires_at END
+         WHERE id = $1`,
+        [adminId]
+    );
+}
+
 export const requestPasswordReset = async (req: Request, res: Response): Promise<void> => {
     const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
     const genericMessage = 'Si el correo está registrado, recibirás un enlace para restablecer tu contraseña.';
@@ -563,10 +579,100 @@ export const requestPasswordReset = async (req: Request, res: Response): Promise
     }
 };
 
+export const verifyPasswordResetTotp = async (req: Request, res: Response): Promise<void> => {
+    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    const otpCode = typeof req.body?.otpCode === 'string' ? req.body.otpCode : '';
+    const invalidCodeMessage = 'No fue posible verificar el código. Revisa el correo y el código autenticador.';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !/^\d{6}$/.test(otpCode)) {
+        res.status(400).json({ error: invalidCodeMessage });
+        return;
+    }
+
+    let client: PoolClient | undefined;
+    try {
+        client = await pool.connect();
+        await client.query('BEGIN');
+        const result = await client.query(
+            `SELECT id, totp_secret_encrypted, totp_enabled, totp_last_used_step,
+                    mfa_failed_attempts, mfa_locked_until
+             FROM admins WHERE LOWER(email) = $1 FOR UPDATE`,
+            [email]
+        );
+        const admin = result.rows[0];
+        if (!admin || !admin.totp_enabled || !admin.totp_secret_encrypted) {
+            await client.query('ROLLBACK');
+            res.status(400).json({ error: invalidCodeMessage });
+            return;
+        }
+        if (sendLockedResponse(res, admin.mfa_locked_until)) {
+            await client.query('ROLLBACK');
+            return;
+        }
+
+        const secret = decryptFaceData(admin.totp_secret_encrypted);
+        const verification = await verify({ secret, token: otpCode });
+        const lastUsedStep = admin.totp_last_used_step === null
+            ? null
+            : BigInt(admin.totp_last_used_step);
+        if (!verification.valid || !('timeStep' in verification)) {
+            await recordPasswordResetTotpFailure(client, admin.id);
+            await client.query('COMMIT');
+            res.status(400).json({ error: invalidCodeMessage });
+            return;
+        }
+        const currentStep = BigInt(verification.timeStep);
+        if (lastUsedStep !== null && currentStep <= lastUsedStep) {
+            await recordPasswordResetTotpFailure(client, admin.id);
+            await client.query('COMMIT');
+            res.status(400).json({ error: invalidCodeMessage });
+            return;
+        }
+
+        const rawToken = randomBytes(32).toString('hex');
+        await client.query(
+            'DELETE FROM password_reset_tokens WHERE expires_at <= CURRENT_TIMESTAMP'
+        );
+        await client.query(
+            `INSERT INTO password_reset_tokens (token_hash, admin_id, expires_at)
+             VALUES ($1, $2, CURRENT_TIMESTAMP + INTERVAL '5 minutes')`,
+            [passwordResetHash(rawToken), admin.id]
+        );
+        await client.query(
+            `UPDATE admins
+             SET totp_last_used_step = $2, mfa_failed_attempts = 0, mfa_locked_until = NULL
+             WHERE id = $1`,
+            [admin.id, currentStep.toString()]
+        );
+        await client.query('COMMIT');
+        res.json({
+            success: true,
+            resetToken: rawToken,
+            expiresInSeconds: 300,
+            message: 'Código verificado. Ahora puedes crear una nueva contraseña.',
+        });
+    } catch (error) {
+        if (client) {
+            try {
+                await client.query('ROLLBACK');
+            } catch (rollbackError) {
+                console.error('Password reset TOTP rollback failed:', rollbackError);
+            }
+        }
+        console.error('Password reset TOTP verification failed:', error);
+        res.status(500).json({ error: 'No fue posible verificar el código autenticador.' });
+    } finally {
+        client?.release();
+    }
+};
+
 export const resetPassword = async (req: Request, res: Response): Promise<void> => {
     const token = typeof req.body?.token === 'string' ? req.body.token : '';
     const password = req.body?.password;
-    if (!token || !validPassword(password)) {
+    if (!token) {
+        res.status(400).json({ error: 'El enlace de restablecimiento no es válido o ya expiró.' });
+        return;
+    }
+    if (!validPassword(password)) {
         res.status(400).json({ error: 'La contraseña debe tener entre 12 y 128 caracteres, con mayúsculas, minúsculas y números.' });
         return;
     }
@@ -585,8 +691,14 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
             return;
         }
         const passwordHash = await bcrypt.hash(password, 12);
-        await client.query('UPDATE admins SET password_hash = $1 WHERE id = $2', [passwordHash, reset.admin_id]);
-        await client.query('UPDATE password_reset_tokens SET used_at = CURRENT_TIMESTAMP WHERE token_hash = $1', [passwordResetHash(token)]);
+        await client.query(
+            `UPDATE admins
+             SET password = $1, mfa_nonce = NULL, mfa_setup_expires_at = NULL,
+                 mfa_failed_attempts = 0, mfa_locked_until = NULL, updated_at = CURRENT_TIMESTAMP
+             WHERE id = $2`,
+            [passwordHash, reset.admin_id]
+        );
+        await client.query('DELETE FROM password_reset_tokens WHERE admin_id = $1', [reset.admin_id]);
         await client.query('COMMIT');
         res.json({ success: true, message: 'Contraseña actualizada. Ya puedes iniciar sesión.' });
     } catch (error) {

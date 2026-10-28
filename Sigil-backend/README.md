@@ -51,6 +51,8 @@
 | POST | `/api/auth/register` | Crear un enrolamiento temporal con descriptor real y generar QR TOTP |
 | POST | `/api/auth/register/verify-totp` | Confirmar TOTP y crear la cuenta |
 | POST | `/api/auth/login-step1` | Validar correo/contraseña y solicitar MFA o configuración inicial TOTP |
+| POST | `/api/auth/password-reset/verify-totp` | Verificar el correo y el código TOTP vigente; devuelve un token de restablecimiento de un solo uso, válido durante 5 minutos |
+| POST | `/api/auth/password-reset/confirm` | Cambiar la contraseña con el token de restablecimiento y guardar el hash en PostgreSQL |
 | POST | `/api/auth/setup-mfa` | Activar TOTP de una cuenta existente y, opcionalmente, enrolar rostro |
 | POST | `/api/auth/verify-facial` | Comparar descriptor facial con la plantilla cifrada |
 | POST | `/api/auth/verify-totp` | Alternativa de autenticación RFC 6238 |
@@ -61,6 +63,8 @@
 | GET | `/api/dashboard/gps` | Consultar posición GPS |
 
 El descriptor facial nunca se retorna desde el backend. Las respuestas no contienen el secreto TOTP excepto en la URI de configuración entregada inmediatamente después de validar la contraseña. Los endpoints de setup/MFA requieren tokens temporales específicos.
+
+En **¿Olvidaste tu contraseña?**, el administrador ingresa el correo de su cuenta y el código de seis dígitos de su aplicación autenticadora. El código TOTP no puede reutilizarse; después de verificarlo, el token temporal permite establecer una contraseña nueva durante cinco minutos. Se aplican el rate limit de autenticación y el bloqueo por intentos fallidos MFA.
 
 Las rutas de conductores validan los campos y estados operativos, rechazan identificadores inválidos y permiten asignar/desasignar un vehículo existente. Los errores de validación y referencias inexistentes se reportan como respuestas `4xx`.
 

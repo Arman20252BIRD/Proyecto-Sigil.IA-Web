@@ -38,16 +38,17 @@ type AuthResponse = {
   otpAuthUrl?: string;
   enrollmentRequired?: boolean;
   facialMfaEnabled?: boolean;
+  resetToken?: string;
 };
 
-export default function AuthPanel() {
+export default function AuthPanel({ initialResetToken = "" }: { initialResetToken?: string }) {
   const router = useRouter();
   const [tab, setTab] = useState<Tab>("login");
   const [loginStep, setLoginStep] = useState<1 | 2>(1);
   const [faceState, setFaceState] = useState<FaceState>("idle");
   const [notice, setNotice] = useState("");
   const [forgotPassword, setForgotPassword] = useState(false);
-  const [resetToken, setResetToken] = useState("");
+  const [resetToken, setResetToken] = useState(initialResetToken);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [mfaToken, setMfaToken] = useState("");
   const [setupEnrollment, setSetupEnrollment] = useState<Enrollment | null>(null);
@@ -69,11 +70,6 @@ export default function AuthPanel() {
 
   useEffect(() => () => {
     streamRef.current?.getTracks().forEach((track) => track.stop());
-  }, []);
-
-  useEffect(() => {
-    const token = new URLSearchParams(window.location.search).get("reset_token");
-    if (token) setResetToken(token);
   }, []);
 
   function stopCamera() {
@@ -199,13 +195,18 @@ export default function AuthPanel() {
     setIsSubmitting(true);
     const formData = new FormData(event.currentTarget);
     try {
-      const response = await fetch(`${API_URL}/api/auth/password-reset/request`, {
+      const response = await fetch(`${API_URL}/api/auth/password-reset/verify-totp`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: formData.get("email") }),
+        body: JSON.stringify({ email: formData.get("email"), otpCode: formData.get("otpCode") }),
       });
       const result: AuthResponse = await response.json();
-      setNotice(result.message ?? result.error ?? "No fue posible solicitar el restablecimiento.");
+      if (!response.ok || !result.success || !result.resetToken) {
+        setNotice(result.error ?? "No fue posible verificar el código autenticador.");
+        return;
+      }
+      setResetToken(result.resetToken);
+      setNotice(result.message ?? "Código verificado. Ahora puedes crear una nueva contraseña.");
     } catch {
       setNotice("No fue posible conectar con el backend. Verifica que el servidor esté activo.");
     } finally {
@@ -486,12 +487,13 @@ export default function AuthPanel() {
 
       {tab === "login" && loginStep === 1 && forgotPassword && !resetToken && (
         <form className={styles.form} onSubmit={submitPasswordResetRequest}>
-          <FormHeader step="RECUPERAR CONTRASEÑA" title="Restablece tu contraseña" text="Solicita un enlace seguro para crear una nueva contraseña." />
-          <Field label="Correo corporativo" name="email" type="email" placeholder="admin@empresa.com" />
+          <FormHeader step="RECUPERAR CONTRASEÑA" title="Verifica tu aplicación autenticadora" text="Ingresa el correo de tu cuenta y el código vigente de seis dígitos de tu aplicación." />
+          <Field label="Correo corporativo" name="email" type="email" placeholder="admin@empresa.com" autoComplete="username" />
+          <Field label="Código autenticador" name="otpCode" placeholder="000000" autoComplete="one-time-code" maxLength={6} inputMode="numeric" pattern="[0-9]{6}" />
           <button className={styles.primaryButton} type="submit" disabled={isSubmitting}>
-            {isSubmitting ? "Enviando..." : "Enviar enlace"}
+            {isSubmitting ? "Verificando..." : "Verificar código"}
           </button>
-          <button type="button" className="forgotPassword" onClick={() => { setForgotPassword(false); setNotice(""); }}>
+          <button type="button" className="forgotPassword" onClick={() => { setForgotPassword(false); setResetToken(""); setNotice(""); }}>
             Volver al inicio de sesión
           </button>
         </form>
@@ -668,6 +670,8 @@ function Field({
   placeholder,
   autoComplete,
   maxLength,
+  inputMode,
+  pattern,
   onValueChange,
 }: {
   label: string;
@@ -676,6 +680,8 @@ function Field({
   placeholder: string;
   autoComplete?: string;
   maxLength?: number;
+  inputMode?: "numeric" | "text";
+  pattern?: string;
   onValueChange?: (value: string) => void;
 }) {
   return (
@@ -687,6 +693,8 @@ function Field({
         placeholder={placeholder}
         autoComplete={autoComplete}
         maxLength={maxLength}
+        inputMode={inputMode}
+        pattern={pattern}
         onChange={onValueChange ? (event) => onValueChange(event.target.value) : undefined}
         required
       />

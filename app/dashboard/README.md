@@ -11,7 +11,7 @@
 - **Detalle del conductor:** al seleccionar una unidad se muestran sus apartados independientes:
   - **Resumen:** estado y datos de GPS/eventos recibidos del backend.
   - **Eventos y logs:** historial consultado desde PostgreSQL.
-  - **GPS:** última posición registrada para el vehículo asociado.
+  - **GPS:** mapa de OpenStreetMap con la última posición registrada para el vehículo asociado y sus coordenadas.
   - **Contactar:** muestra el teléfono del registro del conductor.
 - **Configuración admin:** interfaz visual separada de la gestión de conductores.
 - **Soporte tecnico:** incidencias, documentacion operativa y contacto para la web, sensores y dispositivos ESP32.
@@ -22,6 +22,7 @@
 - Las lecturas y cambios requieren el token de acceso emitido después del login y segundo factor demo; al expirar se cierra la sesión y se vuelve a `/login`.
 - `Alta de conductor`, `Editar` y `Eliminar` persisten los cambios mediante `/api/drivers` y `/api/drivers/:id`.
 - Las últimas posiciones GPS se enlazan a los conductores con vehículo asignado; los eventos recientes vienen del endpoint de eventos.
+- Las coordenadas actuales son datos estáticos de simulación en `Sigil-backend/database/seed.sql`; el mapa de OpenStreetMap requiere conexión a Internet y no actualiza la ubicación del vehículo.
 - Los errores de red o del API se muestran en el dashboard; no se sustituyen con datos de demostración.
 - El identificador de conductor lo genera PostgreSQL. Vehículo y hardware ESP32 aparecen como no asignados hasta asociar un vehículo.
 - `Cerrar sesión` elimina el token de la sesión de la pestaña y regresa a `/login`.

@@ -12,6 +12,7 @@ import {
     resetPassword,
     registerAdmin,
     verifyFacialMfa,
+    verifyPasswordResetTotp,
     verifyRegistrationTotp,
     verifyTotpMfa,
 } from './controllers/auth.controller';
@@ -69,6 +70,7 @@ app.post('/api/auth/register', authRateLimit, registerAdmin);
 app.post('/api/auth/register/verify-totp', authRateLimit, requireEnrollmentSession, verifyRegistrationTotp);
 app.post('/api/auth/login-step1', authRateLimit, loginStepOne);
 app.post('/api/auth/password-reset/request', authRateLimit, requestPasswordReset);
+app.post('/api/auth/password-reset/verify-totp', authRateLimit, verifyPasswordResetTotp);
 app.post('/api/auth/password-reset/confirm', authRateLimit, resetPassword);
 app.post('/api/auth/setup-mfa', authRateLimit, requireMfaSetup, completeMfaSetup);
 app.post('/api/auth/verify-facial', authRateLimit, requireMfaSession, verifyFacialMfa);

@@ -25,3 +25,9 @@
 html { scroll-behavior:smooth; }
 .section { scroll-margin-top:110px; }
 .hero .lead { font-weight:700; }
+
+/* Logo del encabezado en tamaño mediano */
+.headerInner { min-height:84px; }
+.header .brand { width:200px; height:84px; flex:0 0 200px; }
+.headerLogo { width:200px !important; height:110px !important; }
+.footer .brand { width:200px; height:84px; }

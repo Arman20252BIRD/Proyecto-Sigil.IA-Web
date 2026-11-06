@@ -27,6 +27,11 @@ ALTER TABLE admins ADD COLUMN IF NOT EXISTS mfa_facial_status BOOLEAN NOT NULL D
 ALTER TABLE admins ADD COLUMN IF NOT EXISTS mfa_failed_attempts INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE admins ADD COLUMN IF NOT EXISTS mfa_locked_until TIMESTAMPTZ;
 ALTER TABLE admins ADD COLUMN IF NOT EXISTS mfa_setup_expires_at TIMESTAMPTZ;
+ALTER TABLE admins ALTER COLUMN mfa_facial_status DROP DEFAULT;
+ALTER TABLE admins
+    ALTER COLUMN mfa_facial_status TYPE BOOLEAN USING mfa_facial_status::BOOLEAN,
+    ALTER COLUMN mfa_facial_status SET DEFAULT FALSE,
+    ALTER COLUMN mfa_facial_status SET NOT NULL;
 ALTER TABLE admins DROP COLUMN IF EXISTS demo_face_vector;
 
 CREATE TABLE IF NOT EXISTS pending_admin_enrollments (

@@ -82,6 +82,10 @@ ALTER TABLE events ADD COLUMN IF NOT EXISTS severity TEXT NOT NULL DEFAULT 'warn
 ALTER TABLE events ADD COLUMN IF NOT EXISTS message TEXT;
 ALTER TABLE events ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'dashboard';
 ALTER TABLE events ADD COLUMN IF NOT EXISTS hardware_id TEXT;
+ALTER TABLE events ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'resolved';
+UPDATE events SET status = 'resolved' WHERE status IS NULL;
+ALTER TABLE events DROP CONSTRAINT IF EXISTS events_status_check;
+ALTER TABLE events ADD CONSTRAINT events_status_check CHECK (status IN ('active', 'resolved'));
 
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
     token_hash TEXT PRIMARY KEY,

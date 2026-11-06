@@ -121,17 +121,22 @@ export const createDriver = async (req: Request, res: Response): Promise<void> =
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-        const newDriver = await client.query(
-            `WITH inserted AS (
-                INSERT INTO drivers (nombre, email, telefono, estatus_operativo, vehicle_id)
-                VALUES ($1, $2, $3, $4, $5)
-                RETURNING *
-            )
-            SELECT i.*, v.numero_flota, v.modelo, v.placas, v.hardware_id
-            FROM inserted i
-            LEFT JOIN vehicles v ON v.id = i.vehicle_id`,
+        const insertedDriver = await client.query(
+            `INSERT INTO drivers (nombre, email, telefono, estatus_operativo, vehicle_id)
+             VALUES ($1, $2, $3, $4, $5)
+             RETURNING id`,
             [nombre, email, telefono, estatus_operativo, parsed.input.vehicle_id ?? null]
         );
+        const driverId = insertedDriver.rows[0].id as number;
+
+        const newDriver = await client.query(
+            `SELECT d.*, v.numero_flota, v.modelo, v.placas, v.hardware_id
+             FROM drivers d
+             LEFT JOIN vehicles v ON v.id = d.vehicle_id
+             WHERE d.id = $1`,
+            [driverId]
+        );
+
         const demoAlertCreated = Math.random() < 0.5;
         if (demoAlertCreated) {
             await client.query(

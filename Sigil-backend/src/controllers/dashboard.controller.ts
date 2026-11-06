@@ -75,8 +75,8 @@ export const ingestDeviceEvent = async (req: Request, res: Response): Promise<vo
             return;
         }
         const inserted = await pool.query(
-            `INSERT INTO events (driver_id, created_at, event_type, severity, message, source, hardware_id)
-             VALUES ($1, COALESCE($2::timestamptz, NOW()), $3, $4, $5, 'esp32', $6)
+            `INSERT INTO events (driver_id, created_at, event_type, severity, message, source, hardware_id, status)
+             VALUES ($1, COALESCE($2::timestamptz, NOW()), $3, $4, $5, 'esp32', $6, 'active')
              RETURNING *`,
             [driver.rows[0].id, occurredAt, eventType, severity, message, driver.rows[0].hardware_id],
         );

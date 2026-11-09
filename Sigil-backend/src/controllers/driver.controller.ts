@@ -1,6 +1,7 @@
 
 import { Request, Response } from 'express';
 import { pool } from '../config/db';
+import type { AuthRequest } from '../middleware/auth.middleware';
 
 const operationalStatuses = new Set(['Activo', 'Inactivo']);
 const driverFields = new Set(['nombre', 'email', 'telefono', 'estatus_operativo', 'vehicle_id']);
@@ -110,7 +111,7 @@ function sendDatabaseError(error: unknown, res: Response, action: string): void 
     res.status(500).json({ error: `No se pudo ${action} el conductor. Intenta de nuevo más tarde.` });
 }
 
-export const createDriver = async (req: Request, res: Response): Promise<void> => {
+export const createDriver = async (req: AuthRequest, res: Response): Promise<void> => {
     const parsed = parseDriverInput(req.body);
     if (!parsed.input) {
         res.status(400).json({ error: parsed.error });
@@ -118,30 +119,32 @@ export const createDriver = async (req: Request, res: Response): Promise<void> =
     }
 
     const { nombre, email, telefono, estatus_operativo } = parsed.input;
+    const adminId = req.admin?.id;
+    if (!adminId) {
+        res.status(401).json({ error: 'La sesión de administrador no es válida.' });
+        return;
+    }
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-        const newDriver = await client.query(
-            `WITH inserted AS (
-                INSERT INTO drivers (nombre, email, telefono, estatus_operativo, vehicle_id)
-                VALUES ($1, $2, $3, $4, $5)
-                RETURNING *
-            )
-            SELECT i.*, v.numero_flota, v.modelo, v.placas, v.hardware_id
-            FROM inserted i
-            LEFT JOIN vehicles v ON v.id = i.vehicle_id`,
-            [nombre, email, telefono, estatus_operativo, parsed.input.vehicle_id ?? null]
+        const insertedDriver = await client.query(
+            `INSERT INTO drivers (nombre, email, telefono, estatus_operativo, vehicle_id, admin_id)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             RETURNING id`,
+            [nombre, email, telefono, estatus_operativo, parsed.input.vehicle_id ?? null, adminId]
         );
-        const demoAlertCreated = Math.random() < 0.5;
-        if (demoAlertCreated) {
-            await client.query(
-                `INSERT INTO events (driver_id, created_at, event_type, severity, message, source, hardware_id)
-                 VALUES ($1, NOW(), 'demo_alert', 'warning', $2, 'demo', $3)`,
-                [newDriver.rows[0].id, `Alerta de demostración generada al registrar a ${nombre}.`, newDriver.rows[0].hardware_id ?? null]
-            );
-        }
+        const driverId = insertedDriver.rows[0].id as number;
+
+        const newDriver = await client.query(
+            `SELECT d.*, v.numero_flota, v.modelo, v.placas, v.hardware_id
+             FROM drivers d
+             LEFT JOIN vehicles v ON v.id = d.vehicle_id
+             WHERE d.id = $1`,
+            [driverId]
+        );
+
         await client.query('COMMIT');
-        res.status(201).json({ ...newDriver.rows[0], demo_alert_created: demoAlertCreated });
+        res.status(201).json(newDriver.rows[0]);
     } catch (error) {
         await client.query('ROLLBACK');
         sendDatabaseError(error, res, 'crear');
@@ -150,15 +153,21 @@ export const createDriver = async (req: Request, res: Response): Promise<void> =
     }
 };
 
-export const getDrivers = async (req: Request, res: Response): Promise<void> => {
+export const getDrivers = async (req: AuthRequest, res: Response): Promise<void> => {
+    const adminId = req.admin?.id;
+    if (!adminId) {
+        res.status(401).json({ error: 'La sesión de administrador no es válida.' });
+        return;
+    }
     try {
         const query = `
             SELECT d.*, v.numero_flota, v.modelo, v.placas, v.hardware_id
             FROM drivers d
             LEFT JOIN vehicles v ON d.vehicle_id = v.id
+            WHERE d.admin_id = $1
             ORDER BY d.id;
         `;
-        const result = await pool.query(query);
+        const result = await pool.query(query, [adminId]);
         res.json(result.rows);
     } catch (error) {
         console.error('Error al obtener conductores:', error);
@@ -166,7 +175,7 @@ export const getDrivers = async (req: Request, res: Response): Promise<void> => 
     }
 };
 
-export const updateDriver = async (req: Request, res: Response): Promise<void> => {
+export const updateDriver = async (req: AuthRequest, res: Response): Promise<void> => {
     const id = parseDriverId(req.params.id);
     if (id === null) {
         res.status(400).json({ error: 'El identificador del conductor no es válido.' });
@@ -193,17 +202,23 @@ export const updateDriver = async (req: Request, res: Response): Promise<void> =
     }
     values.push(id);
 
+    const adminId = req.admin?.id;
+    if (!adminId) {
+        res.status(401).json({ error: 'La sesión de administrador no es válida.' });
+        return;
+    }
+
     try {
         const updated = await pool.query(
             `WITH changed AS (
                 UPDATE drivers SET ${assignments.join(', ')}
-                WHERE id = $${values.length}
+                WHERE id = $${values.length} AND admin_id = $${values.length + 1}
                 RETURNING *
             )
             SELECT c.*, v.numero_flota, v.modelo, v.placas, v.hardware_id
             FROM changed c
             LEFT JOIN vehicles v ON v.id = c.vehicle_id`,
-            values
+            [...values, adminId]
         );
 
         if (updated.rows.length === 0) {
@@ -217,15 +232,21 @@ export const updateDriver = async (req: Request, res: Response): Promise<void> =
     }
 };
 
-export const deleteDriver = async (req: Request, res: Response): Promise<void> => {
+export const deleteDriver = async (req: AuthRequest, res: Response): Promise<void> => {
     const id = parseDriverId(req.params.id);
     if (id === null) {
         res.status(400).json({ error: 'El identificador del conductor no es válido.' });
         return;
     }
 
+    const adminId = req.admin?.id;
+    if (!adminId) {
+        res.status(401).json({ error: 'La sesión de administrador no es válida.' });
+        return;
+    }
+
     try {
-        const result = await pool.query('DELETE FROM drivers WHERE id = $1 RETURNING *;', [id]);
+        const result = await pool.query('DELETE FROM drivers WHERE id = $1 AND admin_id = $2 RETURNING *;', [id, adminId]);
 
         if (result.rows.length === 0) {
             res.status(404).json({ error: 'Conductor no encontrado' });

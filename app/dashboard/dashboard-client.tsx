@@ -36,6 +36,7 @@ type EventRecord = {
   id: number | string;
   driver_id: number | string;
   created_at: string;
+  status: "active" | "resolved";
   conductor_nombre: string;
   numero_flota: string | null;
 };
@@ -102,6 +103,7 @@ function isEventRecord(value: unknown): value is EventRecord {
   return (typeof record.id === "number" || typeof record.id === "string")
     && (typeof record.driver_id === "number" || typeof record.driver_id === "string")
     && typeof record.created_at === "string"
+    && (record.status === "active" || record.status === "resolved")
     && typeof record.conductor_nombre === "string"
     && (record.numero_flota == null || typeof record.numero_flota === "string");
 }
@@ -236,8 +238,10 @@ export default function DashboardClient() {
   const [isSavingAdminProfile, setIsSavingAdminProfile] = useState(false);
 
   const activeCount = useMemo(() => vehicles.filter((vehicle) => vehicle.status === "Activo").length, [vehicles]);
+  const activeEventDriverIds = useMemo(() => new Set(events.filter((event) => event.status === "active").map((event) => String(event.driver_id))), [events]);
   const vehiclesWithGps = useMemo(() => vehicles.map((vehicle) => {
-    const position = gpsRecords.find((record) => String(record.vehicle_id) === vehicle.vehicleId);
+    const hasActiveEvent = activeEventDriverIds.has(vehicle.backendId);
+    const position = hasActiveEvent ? gpsRecords.find((record) => String(record.vehicle_id) === vehicle.vehicleId) : null;
     const location = position
       ? position.latitude !== null && position.longitude !== null
         ? `${position.latitude.toFixed(4)}, ${position.longitude.toFixed(4)}`
@@ -248,12 +252,16 @@ export default function DashboardClient() {
       location,
       lastSeen: position ? new Date(position.timestamp).toLocaleString("es-MX") : "Sin datos",
     };
-  }), [vehicles, gpsRecords]);
+  }), [vehicles, gpsRecords, activeEventDriverIds]);
   const filtered = vehiclesWithGps.filter((vehicle) => `${vehicle.id} ${vehicle.driver}`.toLowerCase().includes(search.toLowerCase()));
   const selectedWithGps = selected
     ? vehiclesWithGps.find((vehicle) => vehicle.backendId === selected.backendId) ?? selected
     : null;
-  const selectedGps = selected?.vehicleId
+  const selectedEvents = selectedWithGps
+    ? events.filter((event) => String(event.driver_id) === selectedWithGps.backendId)
+    : [];
+  const hasActiveEvent = selectedEvents.some((event) => event.status === "active");
+  const selectedGps = hasActiveEvent && selected?.vehicleId
     ? gpsRecords.find((record) => String(record.vehicle_id) === selected.vehicleId) ?? null
     : null;
   const showToast = useCallback((message: string) => {
@@ -505,7 +513,7 @@ export default function DashboardClient() {
 
         <div className={styles.dashboard} id="overview">
           {section === "overview" && <SummaryPanel activeCount={activeCount} vehicleCount={vehicles.length} events={events} gpsCount={gpsRecords.length} onFleet={() => go("fleet")} />}
-          {section === "fleet" && <><FleetPanel vehicles={filtered} search={search} selectedId={selected?.id ?? ""} isLoading={isLoadingDrivers} onSearch={setSearch} onAdd={() => { setEditing(null); setModal("driver"); }} onSelect={selectDriver} onEdit={(vehicle) => { setEditing(vehicle); setModal("driver"); }} onDelete={(vehicle) => { setSelected(vehicle); setModal("delete"); }} />{selectedWithGps && <DriverWorkspace vehicle={selectedWithGps} gps={selectedGps} events={events.filter((event) => String(event.driver_id) === selectedWithGps.backendId)} tab={driverTab} setTab={setDriverTab} onToast={showToast} />}</>}
+          {section === "fleet" && <><FleetPanel vehicles={filtered} search={search} selectedId={selected?.id ?? ""} isLoading={isLoadingDrivers} onSearch={setSearch} onAdd={() => { setEditing(null); setModal("driver"); }} onSelect={selectDriver} onEdit={(vehicle) => { setEditing(vehicle); setModal("driver"); }} onDelete={(vehicle) => { setSelected(vehicle); setModal("delete"); }} />{selectedWithGps && <DriverWorkspace vehicle={selectedWithGps} gps={selectedGps} events={selectedEvents} hasActiveEvent={hasActiveEvent} tab={driverTab} setTab={setDriverTab} onToast={showToast} />}</>}
           {section === "admin" && <AdminSettings profile={adminProfile} draft={adminDraft} onDraftChange={setAdminDraft} isLoading={isLoadingAdminProfile} isSaving={isSavingAdminProfile} onSave={saveAdminProfile} onRetry={loadAdminProfile} />}
           {section === "support" && <SupportPanel onToast={showToast} />}
         </div>
@@ -616,7 +624,7 @@ function FleetPanel({ vehicles, search, selectedId, isLoading, onSearch, onAdd, 
   </section>;
 }
 
-function DriverWorkspace({ vehicle, gps, events, tab, setTab, onToast }: { vehicle: Vehicle; gps: GpsRecord | null; events: EventRecord[]; tab: string; setTab: (tab: string) => void; onToast: (message: string) => void }) {
+function DriverWorkspace({ vehicle, gps, events, hasActiveEvent, tab, setTab, onToast }: { vehicle: Vehicle; gps: GpsRecord | null; events: EventRecord[]; hasActiveEvent: boolean; tab: string; setTab: (tab: string) => void; onToast: (message: string) => void }) {
   const [contactOpen, setContactOpen] = useState(false);
   const coordinates = gps && gps.latitude !== null && gps.longitude !== null
     ? `${gps.latitude.toFixed(4)}, ${gps.longitude.toFixed(4)}`
@@ -624,17 +632,18 @@ function DriverWorkspace({ vehicle, gps, events, tab, setTab, onToast }: { vehic
   const latestEvent = events[0];
   return <section className={styles.driverWorkspace} id={`driver-detail-${vehicle.id}`}>
     <div className={styles.driverHeader}><div><span className={styles.sectionLabel}>02 / CONDUCTOR SELECCIONADO</span><h2>{vehicle.driver} <small>{vehicle.id}</small></h2><p>{vehicle.phone || "Sin teléfono registrado"} · {vehicle.location}</p></div><span className={`${styles.status} ${vehicle.status === "Activo" ? styles.statusActive : styles.statusOffline}`}><i />{vehicle.status}</span></div>
-    <nav className={styles.detailTabs} aria-label="Detalle del conductor">{[["resumen", "Resumen"], ["events", "Eventos"], ["gps", "GPS"], ["contact", "Contactar"], ["logs", "Logs y registros"]].map(([id, label]) => <button key={id} className={tab === id ? styles.detailTabActive : styles.detailTab} onClick={() => setTab(id)}>{label}</button>)}</nav>
+     <nav className={styles.detailTabs} aria-label="Detalle del conductor">{[["resumen", "Resumen"], ["events", "Eventos"], ["gps", "GPS"], ["contact", "Contactar"], ["logs", "Logs y registros"]].map(([id, label]) => <button key={id} className={tab === id ? styles.detailTabActive : styles.detailTab} onClick={() => setTab(id)}>{label}</button>)}</nav>
     {tab === "resumen" && <div className={styles.detailGrid}><DetailCard title="Estado" value={vehicle.status} detail="Estado operativo del conductor" /><DetailCard title="Último evento" value={latestEvent ? `Evento #${latestEvent.id}` : "Sin eventos"} detail={latestEvent ? new Date(latestEvent.created_at).toLocaleString("es-MX") : "Sin actividad registrada"} /><DetailCard title="Última posición GPS" value={coordinates} detail={gps ? new Date(gps.timestamp).toLocaleString("es-MX") : "Sin datos GPS asociados"} /></div>}
     {tab === "events" && <EventTable events={events} />}
-    {tab === "gps" && <div className={styles.driverMap}><DriverGpsMap vehicle={vehicle} gps={gps} /></div>}
+     {tab === "gps" && <div className={styles.driverMap}><DriverGpsMap vehicle={vehicle} gps={hasActiveEvent ? gps : null} hasActiveEvent={hasActiveEvent} /></div>}
     {tab === "contact" && <div className={styles.contactModule}><div className={styles.contactInfo}><span className={styles.contactAvatar}>{vehicle.driver.split(" ").map((name) => name[0]).slice(0, 2).join("")}</span><div><h3>Contactar al conductor</h3><p>{vehicle.driver} · {vehicle.phone || "Sin teléfono registrado."}</p></div></div><button className={styles.primaryButton} disabled={!vehicle.phone} onClick={() => setContactOpen(true)}>Contactar conductor</button></div>}
     {contactOpen && vehicle.phone && <Modal title="Contactar al conductor" onClose={() => setContactOpen(false)}><div className={styles.callDialog}><span className={styles.contactAvatar}>{vehicle.driver.split(" ").map((name) => name[0]).slice(0, 2).join("")}</span><h3>{vehicle.driver}</h3><p>{vehicle.phone}</p><small>Se abrirá la aplicación de llamadas disponible en este equipo.</small><a className={styles.primaryButton} href={`tel:${vehicle.phone}`}>Llamar ahora</a></div></Modal>}
     {tab === "logs" && <EventTable events={events} />}
   </section>;
 }
 
-function DriverGpsMap({ vehicle, gps }: { vehicle: Vehicle; gps: GpsRecord | null }) {
+function DriverGpsMap({ vehicle, gps, hasActiveEvent }: { vehicle: Vehicle; gps: GpsRecord | null; hasActiveEvent: boolean }) {
+  if (!hasActiveEvent) return <p>El monitoreo GPS se activarÃ¡ cuando este conductor tenga un evento activo.</p>;
   if (!gps) return <p>No hay posiciones GPS registradas para este vehículo.</p>;
   if (gps.latitude === null || gps.longitude === null) return <p>La posición GPS no contiene coordenadas válidas.</p>;
 

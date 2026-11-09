@@ -2,6 +2,13 @@
 
 import { useState, useSyncExternalStore } from "react";
 import styles from "./cookie-consent.module.css";
+import {
+  applyInterfacePreferences,
+  clearInterfacePreferences,
+  persistInterfacePreferences,
+  type InterfaceLanguage,
+  type InterfaceTheme,
+} from "./preferences";
 
 type OptionalConsent = {
   analytics: boolean;
@@ -30,11 +37,24 @@ function subscribeToConsent(callback: () => void) {
   return () => window.removeEventListener("sigil:cookie-consent", callback);
 }
 
+function subscribeToUiPreferences(callback: () => void) {
+  window.addEventListener("sigil:ui-preferences", callback);
+  return () => window.removeEventListener("sigil:ui-preferences", callback);
+}
+
+function getAppliedUiPreferences() {
+  const language = document.documentElement.lang === "en" ? "en" : "es";
+  const theme = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+  return `${language}-${theme}`;
+}
+
 export default function CookieConsent() {
   const consentValue = useSyncExternalStore(subscribeToConsent, getConsentValue, () => null);
+  const uiPreferences = useSyncExternalStore(subscribeToUiPreferences, getAppliedUiPreferences, () => "es-light");
   const [customizing, setCustomizing] = useState(false);
   const [analytics, setAnalytics] = useState(false);
   const [preferences, setPreferences] = useState(false);
+  const [language, theme] = uiPreferences.split("-") as [InterfaceLanguage, InterfaceTheme];
   const [saveError, setSaveError] = useState("");
 
   function saveConsent(nextConsent: OptionalConsent) {
@@ -50,6 +70,18 @@ export default function CookieConsent() {
     if (getConsentValue() !== value) {
       setSaveError("No pudimos guardar tu elección. Revisa la configuración de cookies de tu navegador e inténtalo de nuevo.");
       return;
+    }
+
+    if (nextConsent.preferences) {
+      if (!persistInterfacePreferences({ language, theme })) {
+        document.cookie = `${COOKIE_NAME}=; Path=/; Max-Age=0; SameSite=Lax${secure}`;
+        clearInterfacePreferences();
+        setSaveError("No pudimos guardar tus preferencias de idioma y apariencia. Revisa la configuración de cookies de tu navegador e inténtalo de nuevo.");
+        return;
+      }
+    } else {
+      clearInterfacePreferences();
+      applyInterfacePreferences({ language: "es", theme: "light" });
     }
 
     setSaveError("");
@@ -80,6 +112,35 @@ export default function CookieConsent() {
             <span><strong>Cookies de preferencias</strong><small>Recuerdan opciones como el idioma o la apariencia.</small></span>
             <input type="checkbox" checked={preferences} onChange={(event) => setPreferences(event.target.checked)} />
           </label>
+          <div className={styles.interfacePreferences}>
+            <label htmlFor="cookie-language">Idioma de la página</label>
+            <select
+              id="cookie-language"
+              value={language}
+              disabled={!preferences}
+              onChange={(event) => {
+                const nextLanguage = event.target.value as InterfaceLanguage;
+                applyInterfacePreferences({ language: nextLanguage, theme });
+              }}
+            >
+              <option value="es">Español</option>
+              <option value="en">English</option>
+            </select>
+            <label htmlFor="cookie-theme">Apariencia de la página</label>
+            <select
+              id="cookie-theme"
+              value={theme}
+              disabled={!preferences}
+              onChange={(event) => {
+                const nextTheme = event.target.value as InterfaceTheme;
+                applyInterfacePreferences({ language, theme: nextTheme });
+              }}
+            >
+              <option value="light">Claro</option>
+              <option value="dark">Oscuro</option>
+            </select>
+            <small>Activa las cookies de preferencias para guardar estos cambios.</small>
+          </div>
           <label className={styles.preference}>
             <span><strong>Cookies de análisis</strong><small>Ayudan a comprender cómo se utiliza el sitio.</small></span>
             <input type="checkbox" checked={analytics} onChange={(event) => setAnalytics(event.target.checked)} />

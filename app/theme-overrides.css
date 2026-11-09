@@ -14,3 +14,60 @@
 .infoHeaderInner{position:relative}.infoHeaderInner .brand{position:absolute;left:50%;transform:translateX(-50%);margin:0}.infoHeaderInner .actions{margin-left:auto}@media(max-width:850px){.infoHeaderInner .brand{position:static;transform:none;margin:0}.infoHeaderInner{position:static}}
 .chartBarsReference{height:240px;align-items:flex-end;gap:24px;padding:20px 24px 0;background:linear-gradient(to bottom,transparent 24%,#e5e8f2 25%,transparent 26%,transparent 49%,#e5e8f2 50%,transparent 51%,transparent 74%,#e5e8f2 75%,transparent 76%)}.chartColumnReference{gap:9px}.chartBarReference{width:min(42px,75%);min-height:8px;border-radius:5px 5px 0 0;background:linear-gradient(90deg,#13a9d2 0%,#36d9e8 55%,#1473d5 100%);box-shadow:0 6px 14px #159bd655}.chartColumnReference:nth-child(2) .chartBarReference{background:linear-gradient(90deg,#1c9fbe,#a0d932,#2b941e)}.chartColumnReference:nth-child(3) .chartBarReference{background:linear-gradient(90deg,#ef7d00,#ffb414)}.chartColumnReference:nth-child(4) .chartBarReference{background:linear-gradient(90deg,#dd1741,#ff3c78)}.chartColumnReference:nth-child(5) .chartBarReference{background:linear-gradient(90deg,#00a0a7,#11d4da)}.chartColumnReference:nth-child(6) .chartBarReference{background:linear-gradient(90deg,#2756d4,#49b9ed)}.chartColumnReference:nth-child(7) .chartBarReference{background:linear-gradient(90deg,#9c42d6,#e374ff)}.chartColumnReference small{font-size:10px}.chartColumnReference em{color:var(--ink);font-size:16px;font-style:normal}
 html[data-theme="dark"] body{background:#101522;color:#eef3ff}html[data-theme="dark"] [data-theme-surface]{color:#eef3ff;background:#141b2b!important}html[data-theme="dark"] [data-theme-surface] header,html[data-theme="dark"] [data-theme-surface] aside,html[data-theme="dark"] [data-theme-surface] section,html[data-theme="dark"] [data-theme-surface] article,html[data-theme="dark"] [data-theme-surface] .panel,html[data-theme="dark"] [data-theme-surface] .faceBox,html[data-theme="dark"] [data-theme-surface] .supportPanel{background:#182237!important;border-color:#34425e!important;color:#eef3ff}html[data-theme="dark"] [data-theme-surface] input,html[data-theme="dark"] [data-theme-surface] select,html[data-theme="dark"] [data-theme-surface] textarea{color:#eef3ff;background:#111827!important;border-color:#42516f!important}html[data-theme="dark"] [data-theme-surface] p,html[data-theme="dark"] [data-theme-surface] small,html[data-theme="dark"] [data-theme-surface] span{color:#b7c2d9}html[data-theme="dark"] [data-theme-surface] button:not(.primaryButton){background:#182237;color:#dce7ff;border-color:#42516f}html[data-theme="dark"] [data-theme-surface] a{color:#7ccfff}
+
+html[data-theme="dark"] [data-theme-surface] {
+  --ink: #edf2ff;
+  --muted: #bac5d9;
+  --line: #394762;
+  --surface: #111827;
+  --low: #202b40;
+  --primary: #8eafff;
+  --primary-container: #4d76e8;
+  --blue: #8eafff;
+  --blue2: #4d76e8;
+  --bg: #111827;
+  color: #edf2ff;
+  background: #111827 !important;
+}
+
+html[data-theme="dark"] [data-theme-surface] :is(header, aside, section, article, footer, nav, [class*="assurance"], [class*="panel"], [class*="Card"], [class*="metric"], [class*="faceBox"], [class*="tabs"], [class*="qrContainer"], [class*="passwordRequirements"]) {
+  color: #edf2ff;
+  background-color: #182237;
+  border-color: #394762;
+}
+
+html[data-theme="dark"] [data-theme-surface] :is(p, small, label, td, th, li, time) {
+  color: #bac5d9;
+}
+
+html[data-theme="dark"] [data-theme-surface] :is(h1, h2, h3, h4, strong, b, [class*="field"] span, [class*="metric"] strong) {
+  color: #edf2ff;
+}
+
+html[data-theme="dark"] [data-theme-surface] :is(input, select, textarea) {
+  color: #edf2ff;
+  background-color: #111827;
+  border-color: #52617d;
+}
+
+html[data-theme="dark"] [data-theme-surface] :is(button, [role="button"], a:not([class*="primaryButton"]):not([class*="topButton"])) {
+  color: #c9d8ff;
+}
+
+html[data-theme="dark"] [data-theme-surface] :is(button, [role="button"]):not([class*="primaryButton"]):not([class*="tabActive"]) {
+  background-color: #202b40;
+  border-color: #52617d;
+}
+
+html[data-theme="dark"] [data-theme-surface] :is([class*="notice"], [class*="mfaStatus"], [class*="liveTag"]) {
+  color: #a9f0e2;
+  background-color: #123b3b;
+  border-color: #27645e;
+}
+
+html[data-theme="dark"] [data-theme-surface] [class*="primaryButton"],
+html[data-theme="dark"] [data-theme-surface] [class*="topButton"] {
+  color: #fff;
+  background-color: #355fc8;
+  border-color: #527ce8;
+}

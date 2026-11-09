@@ -42,7 +42,7 @@ const features = [
 
 export default function InformativoPage() {
   return (
-    <main className={styles.page}>
+    <main className={styles.page} data-theme-surface>
       <header className={styles.header}><div className={`${styles.headerInner} infoHeaderInner`}>
         <Link className={styles.brand} href="#hero" aria-label="Sigil.IA inicio"><Image className={styles.headerLogo} src="/logo-sigil-transparente.png" alt="Sigil.IA - Ciberseguridad y telemetría vehicular" width={260} height={160} priority /></Link>
         <nav className={styles.nav} aria-label="Navegación principal"><a href="#proyecto">El proyecto</a><a href="#como-funciona">Cómo funciona</a><a href="#funciones">Funciones</a></nav>

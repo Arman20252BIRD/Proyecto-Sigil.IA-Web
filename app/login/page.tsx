@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 };
 
 export default function LoginPage() {
-  return <main className={styles.page}>
+  return <main className={styles.page} data-theme-surface>
     <header className={styles.header}><div className={styles.logoLink} aria-label="Sigil.IA"><Image src="/logo-sigil-transparente.png" alt="Sigil.IA" width={180} height={120} priority /></div><Preferences inHeader /></header>
     <div className={styles.layout}>
       <section className={styles.assurance}><span className={styles.kicker}>Autenticación multifactor</span><h1><span className={styles.titleAccent}>Control seguro</span> para tu operación.</h1><p>El acceso combina contraseña y un segundo factor facial procesado en el navegador o códigos TOTP de una aplicación autenticadora.</p><div className={styles.assuranceFoot}><span className={styles.statusDot} /> Portal administrativo Sigil.IA</div></section>

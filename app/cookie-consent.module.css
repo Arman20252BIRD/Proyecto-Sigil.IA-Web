@@ -95,6 +95,41 @@
   border-top: 1px solid #e1e2eb;
 }
 
+.interfacePreferences {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) minmax(150px, 220px);
+  align-items: center;
+  gap: 8px 14px;
+  padding: 8px 0 12px;
+}
+
+.interfacePreferences label {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.interfacePreferences select {
+  min-height: 38px;
+  padding: 7px 10px;
+  color: #131b2e;
+  background: #fff;
+  border: 1px solid #c4c5d7;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.interfacePreferences select:disabled {
+  cursor: not-allowed;
+  opacity: .6;
+}
+
+.interfacePreferences small {
+  grid-column: 1 / -1;
+  color: #606273;
+  font-size: 11px;
+}
+
 .preference {
   display: flex;
   align-items: center;
@@ -149,5 +184,10 @@
 
   .actions button {
     width: 100%;
+  }
+
+  .interfacePreferences {
+    grid-template-columns: 1fr;
+    gap: 7px;
   }
 }

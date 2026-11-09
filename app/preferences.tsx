@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 
 const pairs: Array<[string, string]> = [
   ["Resumen", "Summary"], ["Conductores", "Drivers"], ["Configuración", "Settings"], ["Soporte técnico", "Technical support"], ["Actualizar", "Refresh"],
@@ -58,11 +58,114 @@ pairs.push(["Estado operativo del conductor", "Driver operational status"]);
 pairs.push(["Contactar conductor", "Contact driver"], ["Llamar ahora", "Call now"], ["Se abrirá la aplicación de llamadas disponible en este equipo.", "The calling application available on this computer will open."]);
 pairs.push(["Lunes", "Monday"], ["Martes", "Tuesday"], ["Miércoles", "Wednesday"], ["Jueves", "Thursday"], ["Viernes", "Friday"], ["Sábado", "Saturday"], ["Domingo", "Sunday"], ["Hoy", "Today"]);
 pairs.push(["01 / CONDUCTORES", "01 / DRIVERS"]);
+pairs.push(
+  ["Tu privacidad importa", "Your privacy matters"],
+  ["Consentimiento de cookies", "Cookie consent"],
+  ["Usamos cookies necesarias para que el sitio funcione.", "We use necessary cookies to make the site work."],
+  ["Si lo autorizas, también podremos usar cookies de preferencias y análisis.", "With your permission, we may also use preference and analytics cookies."],
+  ["Puedes cambiar las categorías opcionales antes de guardar tu elección.", "You can change optional categories before saving your choice."],
+  ["Cookies necesarias", "Necessary cookies"],
+  ["Requeridas para el funcionamiento del sitio.", "Required for the site to work."],
+  ["Cookies de preferencias", "Preference cookies"],
+  ["Recuerdan opciones como el idioma o la apariencia.", "Remember options such as language or appearance."],
+  ["Cookies de análisis", "Analytics cookies"],
+  ["Ayudan a comprender cómo se utiliza el sitio.", "Help us understand how the site is used."],
+  ["Idioma de la página", "Page language"],
+  ["Apariencia de la página", "Page appearance"],
+  ["Claro", "Light"],
+  ["Oscuro", "Dark"],
+  ["Activa las cookies de preferencias para guardar estos cambios.", "Enable preference cookies to save these changes."],
+  ["Aún no has elegido una apariencia.", "You have not chosen an appearance yet."],
+  ["Aceptar solo las necesarias", "Accept necessary only"],
+  ["Personalizar", "Customize"],
+  ["Aceptar todas", "Accept all"],
+  ["Ocultar opciones", "Hide options"],
+  ["Guardar preferencias", "Save preferences"],
+  ["No pudimos guardar tu elección. Revisa la configuración de cookies de tu navegador e inténtalo de nuevo.", "We could not save your choice. Check your browser's cookie settings and try again."],
+  ["No pudimos guardar tus preferencias de idioma y apariencia. Revisa la configuración de cookies de tu navegador e inténtalo de nuevo.", "We could not save your language and appearance preferences. Check your browser's cookie settings and try again."],
+);
 
 const translations = Object.fromEntries(pairs) as Record<string, string>;
 const reverseTranslations = Object.fromEntries(pairs.map(([es, en]) => [en, es])) as Record<string, string>;
 const originalText = new WeakMap<Text, string>();
 const renderedText = new WeakMap<Text, string>();
+
+export type InterfaceLanguage = "es" | "en";
+export type InterfaceTheme = "light" | "dark";
+export type InterfacePreferences = {
+  language: InterfaceLanguage;
+  theme: InterfaceTheme;
+};
+
+function subscribeToInterfacePreferences(callback: () => void) {
+  window.addEventListener("sigil:ui-preferences", callback);
+  return () => window.removeEventListener("sigil:ui-preferences", callback);
+}
+
+function getAppliedLanguage(): InterfaceLanguage {
+  return document.documentElement.lang === "en" ? "en" : "es";
+}
+
+const defaultPreferences: InterfacePreferences = { language: "es", theme: "light" };
+const PREFERENCES_COOKIE = "sigil_ui_preferences";
+const PREFERENCES_MAX_AGE = 60 * 60 * 24 * 180;
+
+function getCookieValue(name: string) {
+  const cookie = document.cookie
+    .split(";")
+    .map((entry) => entry.trim())
+    .find((entry) => entry.startsWith(`${name}=`));
+  return cookie ? cookie.slice(name.length + 1) : null;
+}
+
+function hasPreferenceConsent() {
+  const consent = getCookieValue("sigil_cookie_consent");
+  return consent === "all" || /^custom-[01]-1$/.test(consent ?? "");
+}
+
+export function readInterfacePreferences(): InterfacePreferences {
+  const consent = getCookieValue("sigil_cookie_consent");
+  if (consent !== null && !hasPreferenceConsent()) return defaultPreferences;
+
+  const saved = getCookieValue(PREFERENCES_COOKIE);
+  if (saved && /^(es|en)-(light|dark)$/.test(saved)) {
+    const [language, theme] = saved.split("-") as [InterfaceLanguage, InterfaceTheme];
+    return { language, theme };
+  }
+
+  return {
+    language: window.localStorage.getItem("sigil-language") === "en" ? "en" : "es",
+    theme: window.localStorage.getItem("sigil-theme") === "dark" ? "dark" : "light",
+  };
+}
+
+export function applyInterfacePreferences(preferences: InterfacePreferences) {
+  document.documentElement.lang = preferences.language;
+  document.documentElement.dataset.theme = preferences.theme;
+  translateDocument(preferences.language);
+  window.dispatchEvent(new Event("sigil:ui-preferences"));
+}
+
+export function persistInterfacePreferences(preferences: InterfacePreferences) {
+  if (!hasPreferenceConsent()) return true;
+
+  const value = `${preferences.language}-${preferences.theme}`;
+  const secure = window.location.protocol === "https:" ? "; Secure" : "";
+  document.cookie = `${PREFERENCES_COOKIE}=${value}; Path=/; Max-Age=${PREFERENCES_MAX_AGE}; SameSite=Lax${secure}`;
+  return getCookieValue(PREFERENCES_COOKIE) === value;
+}
+
+export function clearInterfacePreferences() {
+  const secure = window.location.protocol === "https:" ? "; Secure" : "";
+  document.cookie = `${PREFERENCES_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax${secure}`;
+  window.localStorage.removeItem("sigil-language");
+  window.localStorage.removeItem("sigil-theme");
+}
+
+export function updateInterfacePreferences(preferences: InterfacePreferences) {
+  applyInterfacePreferences(preferences);
+  return persistInterfacePreferences(preferences);
+}
 
 function replaceTranslations(value: string, entries: Array<[string, string]>) {
   let result = value;
@@ -106,12 +209,9 @@ function translateDocument(language: "es" | "en") {
 
 export function LanguageSync() {
   useEffect(() => {
-    const language = window.localStorage.getItem("sigil-language") === "en" ? "en" : "es";
-    document.documentElement.lang = language;
-    document.documentElement.dataset.theme = "light";
-    translateDocument(language);
+    applyInterfacePreferences(readInterfacePreferences());
     const observer = new MutationObserver(() => window.requestAnimationFrame(() => {
-      const currentLanguage = window.localStorage.getItem("sigil-language") === "en" ? "en" : "es";
+      const currentLanguage = document.documentElement.lang === "en" ? "en" : "es";
       translateDocument(currentLanguage);
     }));
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });
@@ -121,18 +221,19 @@ export function LanguageSync() {
 }
 
 export function Preferences({ inHeader = false }: { inHeader?: boolean }) {
-  const [language, setLanguage] = useState<"es" | "en">("es");
-  useEffect(() => {
-    const savedLanguage = window.localStorage.getItem("sigil-language") === "en" ? "en" : "es";
-    setLanguage(savedLanguage);
-    document.documentElement.lang = savedLanguage;
-    translateDocument(savedLanguage);
-  }, []);
-  const changeLanguage = (next: "es" | "en") => { setLanguage(next); window.localStorage.setItem("sigil-language", next); document.documentElement.lang = next; translateDocument(next); };
+  const language = useSyncExternalStore(subscribeToInterfacePreferences, getAppliedLanguage, () => "es");
+  const [saveError, setSaveError] = useState(false);
+  const changeLanguage = (next: "es" | "en") => {
+    setSaveError(!updateInterfacePreferences({
+      language: next,
+      theme: document.documentElement.dataset.theme === "dark" ? "dark" : "light",
+    }));
+  };
   return <div className={`sigil-preferences ${!inHeader ? "sigil-preferences-page" : ""}`} aria-label="Preferencias de interfaz">
     <select className="sigil-language" value={language} onChange={(event) => changeLanguage(event.target.value as "es" | "en")} aria-label="Cambiar idioma" title="Cambiar idioma">
       <option value="es">Español</option>
       <option value="en">English</option>
     </select>
+    {saveError && <span role="alert">No fue posible guardar la preferencia.</span>}
   </div>;
 }

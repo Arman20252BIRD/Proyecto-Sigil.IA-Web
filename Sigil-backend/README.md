@@ -23,6 +23,14 @@
    psql -U postgres -d sigil_db -f .\Sigil-backend\database\seed.sql
    ```
 
+   Si ya tenías una base de datos antes de agregar la separación de conductores por administrador, aplica también la migración:
+
+   ```powershell
+   psql -U postgres -d sigil_db -f .\Sigil-backend\database\admin-data-isolation.sql
+   ```
+
+   Esta migración agrega `admin_id` a los conductores existentes y los asigna al primer administrador.
+
    `admin@sigil.local` / `Admin123!` es una cuenta local de prueba. En el primer acceso exige configurar TOTP y permite enrolar una plantilla facial real. El seed no contiene un rostro de demostración. También agrega cuatro conductores ficticios con vehículos, eventos y posiciones GPS para el dashboard; es seguro volver a ejecutarlo y no restablece la contraseña ni el MFA del administrador existente.
 4. Instala e inicia el backend:
 

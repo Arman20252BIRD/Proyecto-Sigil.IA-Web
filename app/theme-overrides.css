@@ -71,3 +71,76 @@ html[data-theme="dark"] [data-theme-surface] [class*="topButton"] {
   background-color: #355fc8;
   border-color: #527ce8;
 }
+
+html[data-theme="dark"] [data-theme-surface] [class*="tableWrap"] th {
+  color: #c9d8ff;
+  background-color: #202b40;
+}
+
+html[data-theme="dark"] [data-theme-surface] [class*="tableWrap"] td {
+  border-bottom-color: #394762;
+}
+
+html[data-theme="dark"] [data-theme-surface] [class*="tableWrap"] tbody tr:hover {
+  background-color: #202b40;
+}
+
+html[data-theme="dark"] [data-theme-surface] [class*="tableWrap"] tbody [class*="driverRowSelected"] {
+  background-color: #2a3956;
+}
+
+html[data-theme="dark"] [data-theme-surface] [class*="sidebarNav"] button b {
+  color: #fff;
+  background-color: #355fc8;
+  border: 1px solid #7fa2ff;
+}
+
+html[data-theme="dark"] [data-theme-surface] [class*="chartBars"] {
+  background-color: #111827;
+  background-image: linear-gradient(
+    to bottom,
+    transparent 24%,
+    #34425e 25%,
+    transparent 26%,
+    transparent 49%,
+    #34425e 50%,
+    transparent 51%,
+    transparent 74%,
+    #34425e 75%,
+    transparent 76%
+  );
+  border-bottom-color: #394762;
+}
+
+html[data-theme="dark"] [data-theme-surface] .chartColumnReference small,
+html[data-theme="dark"] [data-theme-surface] .chartColumn small {
+  color: #bac5d9;
+}
+
+html[data-theme="dark"] [data-theme-surface] .chartColumnReference em {
+  color: #edf2ff;
+}
+
+html[data-theme="dark"] [data-theme-surface] [class*="modal"]:not([class*="Backdrop"]) {
+  color: #edf2ff;
+  background-color: #182237;
+  border-color: #394762;
+}
+
+html[data-theme="dark"] [data-theme-surface] [class*="modal"] h2,
+html[data-theme="dark"] [data-theme-surface] [class*="modal"] label {
+  color: #edf2ff;
+}
+
+html[data-theme="dark"] [data-theme-surface] [class*="modal"] input,
+html[data-theme="dark"] [data-theme-surface] [class*="modal"] select,
+html[data-theme="dark"] [data-theme-surface] [class*="modal"] textarea {
+  color: #edf2ff;
+  background-color: #111827;
+  border-color: #52617d;
+}
+
+html[data-theme="dark"] [data-theme-surface] [class*="modal"] input::placeholder,
+html[data-theme="dark"] [data-theme-surface] [class*="modal"] select option {
+  color: #bac5d9;
+}

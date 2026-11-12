@@ -4,6 +4,8 @@ import Link from "next/link";
 import styles from "./page.module.css";
 import SensorDemo from "./sensor-demo";
 import { Preferences } from "../preferences";
+import { LegalLinks } from "../legal/components/LegalLinks";
+import CookieConsent from "../cookie-consent";
 
 export const metadata: Metadata = {
   title: "Sigil.IA | Ciberseguridad & telemetría vehicular",
@@ -59,7 +61,8 @@ export default function InformativoPage() {
       <section className={`${styles.section} ${styles.processSection}`} id="como-funciona"><div className={styles.centerIntro}><div className={styles.sectionNumber}>02 / CÓMO FUNCIONA</div><h2>Del evento a la información, <span>paso a paso.</span></h2><p>Cuatro etapas describen cómo está planteado el sistema para transformar señales en contexto operativo.</p></div><div className={styles.stageGrid}>{stages.map((title, index) => <article className={styles.stage} key={title}><span className={styles.stageNumber}>0{index + 1}</span><div className={styles.stageLine} /><h3>{title}</h3><p>El sistema procesa la señal, conserva el contexto y entrega información útil para la operación.</p></article>)}</div></section>
       <section className={styles.section} id="funciones"><div className={styles.sectionIntro}><div className={styles.sectionNumber}>03 / FUNCIONES</div><h2>Una plataforma para operar con <span>más contexto.</span></h2><p>Capacidades pensadas para complementar las decisiones de seguridad y operación de una flota.</p></div><div className={styles.featureGrid}>{features.map(([icon, title, text]) => <article className={styles.featureCard} key={title}><div className={styles.featureTop}><span className={styles.cardIcon}><Icon name={icon} /></span><span className={styles.status}>PREVISTO</span></div><h3>{title}</h3><p>{text}</p><div className={styles.featureArrow}><Icon name="arrow" /></div></article>)}</div></section>
       <section className={styles.contact} id="contacto"><div className={styles.contactIcon}><Icon name="security" /></div><div className={styles.sectionNumber}>ACCESO CORPORATIVO</div><h2>Arquitectura abierta a pruebas de concepto institucionales</h2><p>¿Interesado en evaluar los protocolos de Sigil.IA para flotas comerciales o integraciones de telemetría especializada?</p><div className={styles.contactButtons}><Link className={styles.primaryButton} href="/login?tipo=corporativo">Contactar al equipo de ingeniería <Icon name="arrow" /></Link><a className={styles.secondaryButton} href="#proyecto">Revisar arquitectura técnica</a></div></section>
-      <footer className={styles.footer}><div><Link className={styles.brand} href="#hero"><span className={styles.brandIcon}><Icon name="security" /></span>Sigil<span className={styles.brandDot}>.</span>IA</Link><p>© 2025 Sigil.IA. Arquitectura de ciberseguridad vehicular inteligente.</p></div><div className={styles.footerLinks}><a href="#contacto">Privacidad de datos</a><a href="#proyecto">Protocolos ESP32 &amp; MQTT</a><a href="#contacto">Soporte SOC de flota</a><a href="#contacto">Términos de servicio</a></div></footer>
+      <footer className={styles.footer}><div><Link className={styles.brand} href="#hero"><span className={styles.brandIcon}><Icon name="security" /></span>Sigil<span className={styles.brandDot}>.</span>IA</Link><p>© 2025 Sigil.IA. Arquitectura de ciberseguridad vehicular inteligente.</p></div><div className={styles.footerLinks}><LegalLinks /><a href="#proyecto">Protocolos ESP32 &amp; MQTT</a></div></footer>
+      <CookieConsent />
     </main>
   );
 }

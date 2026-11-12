@@ -2,6 +2,7 @@
 import { Request, Response } from 'express';
 import { pool } from '../config/db';
 import type { AuthRequest } from '../middleware/auth.middleware';
+import { writeAuditLog } from '../services/audit-log.service';
 
 const operationalStatuses = new Set(['Activo', 'Inactivo']);
 const driverFields = new Set(['nombre', 'email', 'telefono', 'estatus_operativo', 'vehicle_id']);
@@ -144,6 +145,7 @@ export const createDriver = async (req: AuthRequest, res: Response): Promise<voi
         );
 
         await client.query('COMMIT');
+        void writeAuditLog(req, { adminId, action: 'DRIVER_CREATED', resourceType: 'driver', resourceId: driverId, details: { fields: Object.keys(parsed.input) } });
         res.status(201).json(newDriver.rows[0]);
     } catch (error) {
         await client.query('ROLLBACK');
@@ -168,6 +170,7 @@ export const getDrivers = async (req: AuthRequest, res: Response): Promise<void>
             ORDER BY d.id;
         `;
         const result = await pool.query(query, [adminId]);
+        void writeAuditLog(req, { adminId, action: 'DRIVERS_VIEWED', resourceType: 'driver', details: { count: result.rows.length } });
         res.json(result.rows);
     } catch (error) {
         console.error('Error al obtener conductores:', error);
@@ -226,6 +229,7 @@ export const updateDriver = async (req: AuthRequest, res: Response): Promise<voi
             return;
         }
 
+        void writeAuditLog(req, { adminId, action: 'DRIVER_UPDATED', resourceType: 'driver', resourceId: id, details: { fields: Object.keys(parsed.input) } });
         res.json(updated.rows[0]);
     } catch (error) {
         sendDatabaseError(error, res, 'actualizar');
@@ -253,6 +257,7 @@ export const deleteDriver = async (req: AuthRequest, res: Response): Promise<voi
             return;
         }
 
+        void writeAuditLog(req, { adminId, action: 'DRIVER_DELETED', resourceType: 'driver', resourceId: id });
         res.json({ message: 'Conductor eliminado correctamente' });
     } catch (error) {
         sendDatabaseError(error, res, 'eliminar');

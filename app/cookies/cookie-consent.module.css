@@ -1,13 +1,22 @@
-.banner {
+.backdrop {
   position: fixed;
-  z-index: 100;
-  right: 20px;
-  bottom: 20px;
-  left: 20px;
+  z-index: 1000;
+  inset: 0;
+  display: grid;
+  align-items: end;
+  justify-items: center;
+  padding: 0 20px 20px;
+  background: #131b2e80;
+  backdrop-filter: blur(5px);
+}
+
+.banner {
+  position: relative;
+  z-index: 1001;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 18px 28px;
-  width: min(940px, calc(100% - 40px));
+  width: min(940px, 100%);
   max-height: min(85vh, 620px);
   overflow-y: auto;
   margin: 0 auto;
@@ -167,13 +176,14 @@
 }
 
 @media (max-width: 700px) {
+  .backdrop {
+    padding: 0 12px 12px;
+  }
+
   .banner {
-    right: 12px;
-    bottom: 12px;
-    left: 12px;
     grid-template-columns: 1fr;
     gap: 15px;
-    width: calc(100% - 24px);
+    width: 100%;
     padding: 19px;
   }
 

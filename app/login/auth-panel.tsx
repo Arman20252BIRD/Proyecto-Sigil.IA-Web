@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { useRouter } from "next/navigation";
-import { captureLiveFaceDescriptor, captureVideoFrame, trackLiveFaceBox, type DetectedFaceBox } from "./face-recognition";
+import { captureLiveFaceDescriptor, trackLiveFaceBox, type DetectedFaceBox } from "./face-recognition";
 import styles from "./page.module.css";
 
 type Tab = "login" | "register";
@@ -57,9 +57,11 @@ export default function AuthPanel({ initialResetToken = "" }: { initialResetToke
   const [verificationMode, setVerificationMode] = useState<"face" | "totp">("face");
   const [otpCode, setOtpCode] = useState("");
   const [capturedFaceDescriptor, setCapturedFaceDescriptor] = useState<number[] | null>(null);
-  const [capturedProfilePhoto, setCapturedProfilePhoto] = useState<string | null>(null);
   const [registrationPassword, setRegistrationPassword] = useState("");
   const [registrationPasswordConfirm, setRegistrationPasswordConfirm] = useState("");
+  const [privacyNoticeOpen, setPrivacyNoticeOpen] = useState(true);
+  const [privacyNoticeAccepted, setPrivacyNoticeAccepted] = useState(false);
+  const [privacyConsentStatus, setPrivacyConsentStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [detectedFaceBox, setDetectedFaceBox] = useState<DetectedFaceBox | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -82,10 +84,31 @@ export default function AuthPanel({ initialResetToken = "" }: { initialResetToke
     setFaceState("idle");
   }
 
+  async function handlePrivacyNoticeChange(accepted: boolean) {
+    setPrivacyNoticeAccepted(accepted);
+    if (!accepted) {
+      setPrivacyConsentStatus("idle");
+      return;
+    }
+
+    setPrivacyConsentStatus("saving");
+    try {
+      const response = await fetch(`${API_URL}/api/privacy/notice/accept`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accepted: true, version: "1.0" }),
+      });
+      if (!response.ok) throw new Error("privacy-consent-not-recorded");
+      setPrivacyConsentStatus("saved");
+    } catch {
+      setPrivacyNoticeAccepted(false);
+      setPrivacyConsentStatus("error");
+    }
+  }
+
   async function startCamera() {
     setNotice("");
     setCapturedFaceDescriptor(null);
-    setCapturedProfilePhoto(null);
     setDetectedFaceBox(null);
     if (!navigator.mediaDevices?.getUserMedia) {
       setNotice("Este navegador no permite usar la cámara. Usa el código autenticador o prueba con HTTPS/localhost.");
@@ -281,10 +304,13 @@ export default function AuthPanel({ initialResetToken = "" }: { initialResetToke
       setNotice("Debes aceptar el uso de una plantilla facial cifrada para activar este factor.");
       return;
     }
+    if (formData.get("privacyNoticeAccepted") !== "on") {
+      setNotice("Debes leer y aceptar el Aviso de privacidad para crear la cuenta.");
+      return;
+    }
 
     const faceDescriptor = capturedFaceDescriptor ?? await captureFace();
     if (!faceDescriptor) return;
-    const profilePhoto = capturedProfilePhoto ?? (videoRef.current ? captureVideoFrame(videoRef.current) : null);
 
     setIsSubmitting(true);
     try {
@@ -298,7 +324,9 @@ export default function AuthPanel({ initialResetToken = "" }: { initialResetToke
           telefono_corporativo: formData.get("phone"),
           password,
           faceDescriptor,
-          profilePhoto,
+          privacyNoticeAccepted: true,
+          biometricConsent: true,
+          marketingConsent: formData.get("marketingConsent") === "on",
         }),
       });
       const result: AuthResponse = await response.json();
@@ -416,7 +444,6 @@ export default function AuthPanel({ initialResetToken = "" }: { initialResetToke
   async function captureEnrollmentFace() {
     const descriptor = await captureFace();
     if (descriptor) {
-      setCapturedProfilePhoto(videoRef.current ? captureVideoFrame(videoRef.current) : null);
       setCapturedFaceDescriptor(descriptor);
       stopCamera();
       setFaceState("captured");
@@ -644,8 +671,16 @@ export default function AuthPanel({ initialResetToken = "" }: { initialResetToke
             captured={Boolean(capturedFaceDescriptor)}
           />
           <label className={styles.consent}>
+            <input type="checkbox" name="privacyNoticeAccepted" required checked={privacyNoticeAccepted} onChange={(event) => void handlePrivacyNoticeChange(event.target.checked)} />
+            <span>He leído y acepto el <a href="/legal/privacidad" target="_blank" rel="noreferrer">Aviso de privacidad</a> (versión 1.0).</span>
+          </label>
+          <label className={styles.consent}>
             <input type="checkbox" name="biometricConsent" required />
             <span>Consiento que se procese mi plantilla facial para autenticación MFA. No se almacenará la fotografía.</span>
+          </label>
+          <label className={styles.consent}>
+            <input type="checkbox" name="marketingConsent" />
+            <span>Acepto recibir comunicados opcionales sobre mejoras y encuestas de Sigil.IA.</span>
           </label>
           <button className={styles.primaryButton} type="submit" disabled={isSubmitting || faceState === "processing"}>
             {isSubmitting ? "Registrando..." : "Registrar administrador"} <span>→</span>
@@ -654,6 +689,21 @@ export default function AuthPanel({ initialResetToken = "" }: { initialResetToke
       )}
 
       {notice && <p className={styles.notice} role="status">{notice}</p>}
+      {privacyNoticeOpen && (
+        <div className={styles.privacyOverlay} role="presentation">
+          <section className={styles.privacyModal} role="dialog" aria-modal="true" aria-labelledby="privacy-title">
+            <span className={styles.kicker}>INFORMACIÓN LEGAL · VERSIÓN 1.0</span>
+            <h2 id="privacy-title">Aviso de privacidad</h2>
+            <p>Antes de crear una cuenta, revisa cómo Sigil.IA trata tus datos personales, la plantilla facial, la telemetría y los registros de seguridad.</p>
+            <div className={styles.privacySummary}><span><b>Datos tratados</b> Identificación, contacto, autenticación, GPS, eventos y datos técnicos.</span><span><b>Biometría</b> El descriptor facial se procesa para MFA y se almacena cifrado; no se guarda la fotografía.</span><span><b>Tus derechos</b> Puedes solicitar acceso, rectificación, cancelación u oposición mediante ARCO.</span></div>
+            <label className={styles.privacyAcceptance}><input type="checkbox" checked={privacyNoticeAccepted} onChange={(event) => void handlePrivacyNoticeChange(event.target.checked)} /><span>Acepto el Aviso de privacidad y el tratamiento de mis datos conforme a la versión 1.0.</span></label>
+            {privacyConsentStatus === "saving" && <p className={styles.privacyConsentStatus} role="status">Registrando tu aceptación...</p>}
+            {privacyConsentStatus === "saved" && <p className={styles.privacyConsentStatus} role="status">Aceptación registrada correctamente.</p>}
+            {privacyConsentStatus === "error" && <p className={styles.privacyConsentError} role="alert">No fue posible registrar la aceptación. Verifica que el backend esté activo e inténtalo nuevamente.</p>}
+            <div className={styles.privacyModalActions}><a className={styles.secondaryButton} href="/legal/privacidad" target="_blank" rel="noreferrer">Leer aviso completo</a><a className={styles.textButton} href="/legal/arco" target="_blank" rel="noreferrer">Ver solicitud ARCO</a><button type="button" className={styles.rejectButton} onClick={() => router.replace("/informativo")}>Rechazar</button><button type="button" className={styles.primaryButton} disabled={!privacyNoticeAccepted || privacyConsentStatus !== "saved"} onClick={() => setPrivacyNoticeOpen(false)}>Aceptar</button></div>
+          </section>
+        </div>
+      )}
       <p className={styles.panelFoot}>Los modelos se ejecutan localmente en el navegador. La plantilla cifrada se usa solo para comparación; el análisis de vida no sustituye un sistema certificado anti-suplantación.</p>
     </section>
   );

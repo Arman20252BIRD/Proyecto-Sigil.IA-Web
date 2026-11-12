@@ -9,10 +9,12 @@ import { decryptFaceData, encryptFaceData } from '../security/face-data';
 import type { AuthRequest } from '../middleware/auth.middleware';
 import jwt from 'jsonwebtoken';
 import { createHash, randomBytes } from 'node:crypto';
+import { writeAuditLog } from '../services/audit-log.service';
 
 const FACE_DESCRIPTOR_LENGTH = 1024;
 const FACE_MATCH_THRESHOLD = 0.5;
 const MFA_MAX_FAILURES = 5;
+const PRIVACY_NOTICE_VERSION = '1.0';
 
 type FaceDescriptor = number[];
 type AdminIdentity = { id: string; email: string; nombre: string };
@@ -104,7 +106,8 @@ export const registerAdmin = async (req: Request, res: Response): Promise<void> 
         return;
     }
 
-    const { nombre, email, password, telefono_corporativo, empresa, faceDescriptor, profilePhoto } = req.body ?? {};
+    const { nombre, email, password, telefono_corporativo, empresa, faceDescriptor, profilePhoto,
+        privacyNoticeAccepted, biometricConsent, marketingConsent } = req.body ?? {};
     const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
 
     if (typeof nombre !== 'string' || nombre.trim().length < 2 || nombre.trim().length > 120) {
@@ -126,6 +129,14 @@ export const registerAdmin = async (req: Request, res: Response): Promise<void> 
         res.status(400).json({
             error: 'No se recibió una plantilla facial válida. Activa la cámara, captura el rostro y vuelve a intentarlo.',
         });
+        return;
+    }
+    if (privacyNoticeAccepted !== true) {
+        res.status(400).json({ error: 'Debes aceptar el Aviso de privacidad para crear la cuenta.' });
+        return;
+    }
+    if (biometricConsent !== true) {
+        res.status(400).json({ error: 'Debes aceptar expresamente el tratamiento del descriptor facial.' });
         return;
     }
     if (profilePhoto !== undefined && profilePhoto !== null
@@ -154,8 +165,9 @@ export const registerAdmin = async (req: Request, res: Response): Promise<void> 
         const pending = await pool.query(
             `INSERT INTO pending_admin_enrollments
                 (id, nombre, email, password, telefono_corporativo, empresa, profile_photo,
+                 privacy_notice_version, privacy_notice_accepted, biometric_consent, marketing_consent,
                  face_template_encrypted, totp_secret_encrypted, expires_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW() + INTERVAL '15 minutes')
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW() + INTERVAL '15 minutes')
              RETURNING email`,
             [
                 enrollmentId,
@@ -165,10 +177,19 @@ export const registerAdmin = async (req: Request, res: Response): Promise<void> 
                 typeof telefono_corporativo === 'string' ? telefono_corporativo.trim() : null,
                 typeof empresa === 'string' ? empresa.trim() : null,
                 typeof profilePhoto === 'string' ? profilePhoto : null,
+                PRIVACY_NOTICE_VERSION,
+                true,
+                true,
+                marketingConsent === true,
                 encryptFaceData(JSON.stringify(faceDescriptor)),
                 encryptFaceData(totpSecret),
             ]
         );
+
+        await writeAuditLog(req, {
+            action: 'REGISTRATION_STARTED',
+            details: { email: normalizedEmail, privacyVersion: PRIVACY_NOTICE_VERSION },
+        });
 
         const identity: AdminIdentity = { id: '0', email: pending.rows[0].email, nombre: nombre.trim() };
         res.status(201).json({
@@ -199,6 +220,7 @@ export const verifyRegistrationTotp = async (req: AuthRequest, res: Response): P
     try {
         const result = await pool.query(
             `SELECT id, nombre, email, password, telefono_corporativo, empresa, profile_photo,
+                    privacy_notice_version, privacy_notice_accepted, biometric_consent, marketing_consent,
                     face_template_encrypted, totp_secret_encrypted, failed_attempts, locked_until
              FROM pending_admin_enrollments
              WHERE id = $1 AND expires_at > NOW()`,
@@ -247,9 +269,41 @@ export const verifyRegistrationTotp = async (req: AuthRequest, res: Response): P
                     verification.timeStep,
                 ]
             );
+            admin = inserted.rows[0];
+            const privacyDocument = await client.query(
+                `SELECT id FROM privacy_documents WHERE document_type = 'privacy_notice' AND version = $1 LIMIT 1`,
+                [pending.privacy_notice_version ?? PRIVACY_NOTICE_VERSION],
+            );
+            const privacyDocumentId = privacyDocument.rows[0]?.id ?? null;
+            const consentValues = [
+                [admin.id, privacyDocumentId, 'privacy_notice', true, pending.privacy_notice_version ?? PRIVACY_NOTICE_VERSION],
+                [admin.id, privacyDocumentId, 'biometric', true, pending.privacy_notice_version ?? PRIVACY_NOTICE_VERSION],
+                [admin.id, privacyDocumentId, 'marketing', pending.marketing_consent === true, pending.privacy_notice_version ?? PRIVACY_NOTICE_VERSION],
+            ];
+            for (const [adminId, documentId, consentType, accepted, version] of consentValues) {
+                await client.query(
+                    `INSERT INTO privacy_consents (admin_id, document_id, consent_type, accepted, version, ip_address, user_agent)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                    [adminId, documentId, consentType, accepted, version, req.ip ?? null, req.get('user-agent') ?? null],
+                );
+            }
+            await client.query(
+                `INSERT INTO audit_logs (admin_id, action, resource_type, resource_id, details, ip_address, user_agent)
+                 VALUES ($1, 'ADMIN_REGISTERED', 'admin', $2, $3::jsonb, $4, $5)`,
+                [admin.id, admin.id, JSON.stringify({ privacyVersion: pending.privacy_notice_version ?? PRIVACY_NOTICE_VERSION }), req.ip ?? null, req.get('user-agent') ?? null],
+            );
+            await client.query(
+                `INSERT INTO audit_logs (admin_id, action, resource_type, resource_id, details, ip_address, user_agent)
+                 VALUES ($1, 'PRIVACY_NOTICE_ACCEPTED', 'privacy_notice', $2, $3::jsonb, $4, $5)`,
+                [admin.id, pending.privacy_notice_version ?? PRIVACY_NOTICE_VERSION, JSON.stringify({ version: pending.privacy_notice_version ?? PRIVACY_NOTICE_VERSION }), req.ip ?? null, req.get('user-agent') ?? null],
+            );
+            await client.query(
+                `INSERT INTO audit_logs (admin_id, action, resource_type, resource_id, details, ip_address, user_agent)
+                 VALUES ($1, 'BIOMETRIC_CONSENT_ACCEPTED', 'privacy_consent', $2, $3::jsonb, $4, $5)`,
+                [admin.id, admin.id, JSON.stringify({ version: pending.privacy_notice_version ?? PRIVACY_NOTICE_VERSION }), req.ip ?? null, req.get('user-agent') ?? null],
+            );
             await client.query('DELETE FROM pending_admin_enrollments WHERE id = $1', [enrollmentId]);
             await client.query('COMMIT');
-            admin = inserted.rows[0];
         } catch (error) {
             await client.query('ROLLBACK');
             throw error;
@@ -295,6 +349,7 @@ export const loginStepOne = async (req: Request, res: Response): Promise<void> =
         const admin = result.rows[0];
 
         if (!admin || !(await bcrypt.compare(password, admin.password))) {
+            void writeAuditLog(req, { action: 'LOGIN_FAILED', details: { email: typeof email === 'string' ? email.trim().toLowerCase() : null }, success: false, failureReason: 'invalid_credentials' });
             res.status(401).json({ error: 'Credenciales inválidas.' });
             return;
         }
@@ -302,6 +357,7 @@ export const loginStepOne = async (req: Request, res: Response): Promise<void> =
 
         const identity = identityFromRow(admin);
         const mfaJti = randomUUID();
+        void writeAuditLog(req, { adminId: admin.id, action: 'LOGIN_CREDENTIALS_VERIFIED', resourceType: 'admin', resourceId: admin.id });
 
         if (!admin.totp_enabled || !admin.totp_secret_encrypted) {
             const totpSecret = generateSecret();

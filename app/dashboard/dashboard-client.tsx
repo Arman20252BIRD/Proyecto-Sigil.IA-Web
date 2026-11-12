@@ -597,7 +597,7 @@ function LegacySummaryPanel({ activeCount, vehicleCount, events, gpsCount, onFle
 
 function SupportPanel({ onToast: _onToast }: { onToast: (message: string) => void }) {
   const [supportOpen, setSupportOpen] = useState(false);
-  const supportEmail = process.env.NEXT_PUBLIC_SUPPORT_EMAIL ?? "soporte@sigil.ia";
+  const supportEmail = process.env.NEXT_PUBLIC_SUPPORT_EMAIL ?? "sigil.ia.soporte@gmail.com";
   return <>
     <section className={styles.supportPanel}><div className={styles.panelHeader}><div><span className={styles.sectionLabel}>01 / CENTRO DE AYUDA</span><h2>Soporte técnico de Sigil.IA</h2><p>Obtén ayuda para la plataforma, los dispositivos ESP32 y la operación de tu flota.</p></div><span className={styles.supportStatus}>● Soporte disponible</span></div><div className={styles.supportGrid}>
       <article className={styles.supportCard}><span>?</span><h3>Guía de operación</h3><p>Consulta cómo administrar conductores, alertas, GPS y registros históricos.</p><a className="supportAction" href="/manual-sigilia.pdf" download="manual-sigilia.pdf">Descargar manual PDF →</a></article>

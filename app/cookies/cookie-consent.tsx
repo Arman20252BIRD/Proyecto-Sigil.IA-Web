@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import styles from "./cookie-consent.module.css";
 import {
   applyInterfacePreferences,
@@ -57,6 +57,17 @@ export default function CookieConsent() {
   const [language, theme] = uiPreferences.split("-") as [InterfaceLanguage, InterfaceTheme];
   const [saveError, setSaveError] = useState("");
 
+  useEffect(() => {
+    if (consentValue !== null) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [consentValue]);
+
   function saveConsent(nextConsent: OptionalConsent) {
     const value = nextConsent.analytics && nextConsent.preferences
       ? "all"
@@ -91,10 +102,17 @@ export default function CookieConsent() {
   if (consentValue !== null) return null;
 
   return (
-    <aside className={styles.banner} aria-label="Consentimiento de cookies">
+    <div className={styles.backdrop} role="presentation">
+      <aside
+        className={styles.banner}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="cookie-consent-title"
+        aria-label="Consentimiento de cookies"
+      >
       <div className={styles.copy}>
         <p className={styles.eyebrow}>Tu privacidad importa</p>
-        <h2>Consentimiento de cookies</h2>
+        <h2 id="cookie-consent-title">Consentimiento de cookies</h2>
         <p>
           Usamos cookies necesarias para que el sitio funcione. Si lo autorizas,
           también podremos usar cookies de preferencias y análisis. Puedes cambiar
@@ -174,6 +192,7 @@ export default function CookieConsent() {
           </>
         )}
       </div>
-    </aside>
+      </aside>
+    </div>
   );
 }

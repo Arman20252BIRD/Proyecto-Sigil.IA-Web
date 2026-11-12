@@ -3,6 +3,7 @@ import { Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { pool } from '../config/db';
 import type { AuthRequest } from '../middleware/auth.middleware';
+import { writeAuditLog } from '../services/audit-log.service';
 
 function getRequestedAdminId(req: AuthRequest): string | undefined {
     const id = req.params.id;
@@ -109,6 +110,7 @@ export const updateAdminProfile = async (req: AuthRequest, res: Response): Promi
             return;
         }
 
+        void writeAuditLog(req, { adminId: id, action: 'ADMIN_PROFILE_UPDATED', resourceType: 'admin', resourceId: id, details: { passwordChanged: Boolean(passwordHash), profilePhotoChanged: typeof profilePhoto === 'string' } });
         res.json({ message: 'Perfil actualizado correctamente', admin: result.rows[0] });
     } catch (error) {
         if (typeof error === 'object' && error !== null && 'code' in error && error.code === '23505') {

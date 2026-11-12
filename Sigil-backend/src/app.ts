@@ -20,6 +20,8 @@ import { getAdminProfile, updateAdminProfile } from './controllers/admin.control
 import { createDriver, getDrivers, updateDriver, deleteDriver } from './controllers/driver.controller';
 import { getEventsDashboard, getGpsTracking, ingestDeviceEvent } from './controllers/dashboard.controller';
 import { requireDeviceKey } from './middleware/device-auth.middleware';
+import { authorizeArcoWithGmail, gmailArcoCallback } from './controllers/gmail.controller';
+import { recordPrivacyNoticeAcceptance } from './controllers/privacy.controller';
 import {
     requireAuth,
     requireEnrollmentSession,
@@ -45,7 +47,7 @@ const authRateLimit = rateLimit({
 app.disable('x-powered-by');
 app.use(helmet({ crossOriginResourcePolicy: false }));
 app.use(cors({ origin: allowedOrigins, credentials: true }));
-app.use(express.json({ limit: '64kb' }));
+app.use(express.json({ limit: '16mb' }));
 app.use(rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 200,
@@ -75,6 +77,7 @@ app.post('/api/auth/password-reset/confirm', authRateLimit, resetPassword);
 app.post('/api/auth/setup-mfa', authRateLimit, requireMfaSetup, completeMfaSetup);
 app.post('/api/auth/verify-facial', authRateLimit, requireMfaSession, verifyFacialMfa);
 app.post('/api/auth/verify-totp', authRateLimit, requireMfaSession, verifyTotpMfa);
+app.post('/api/privacy/notice/accept', authRateLimit, recordPrivacyNoticeAcceptance);
 
 // --- RUTAS DE ADMINISTRADOR ---
 app.get('/api/admin', requireAuth, getAdminProfile);
@@ -94,6 +97,8 @@ app.delete('/api/drivers/:id', requireAuth, deleteDriver);
 app.get('/api/dashboard/events', requireAuth, getEventsDashboard);
 app.get('/api/dashboard/gps', requireAuth, getGpsTracking);
 app.post('/api/telemetry/events', requireDeviceKey, ingestDeviceEvent);
+app.post('/api/privacy/arco/gmail/authorize', authorizeArcoWithGmail);
+app.get('/api/privacy/arco/gmail/callback', gmailArcoCallback);
 
 async function purgeExpiredMfaEnrollments(): Promise<void> {
     try {

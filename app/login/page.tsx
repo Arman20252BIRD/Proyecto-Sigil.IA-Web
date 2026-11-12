@@ -4,6 +4,7 @@ import Image from "next/image";
 import AuthPanelQuery from "./auth-panel-query";
 import styles from "./page.module.css";
 import { Preferences } from "../preferences";
+import { LegalLinks } from "../legal/components/LegalLinks";
 
 export const metadata: Metadata = {
   title: "Acceso corporativo | Sigil.IA",
@@ -19,6 +20,6 @@ export default function LoginPage() {
         <AuthPanelQuery />
       </Suspense>
     </div>
-    <footer className={styles.footer}><span>© 2025 Sigil.IA</span><span>Acceso restringido a personal autorizado</span><a href="/informativo">Volver al portal informativo</a></footer>
+    <footer className={styles.footer}><span>© 2025 Sigil.IA</span><span>Acceso restringido a personal autorizado</span><LegalLinks /><a href="/informativo">Volver al portal informativo</a></footer>
   </main>;
 }

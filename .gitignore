@@ -2,7 +2,7 @@
 
 # dependencies
 /node_modules
-/Sigil-backend/node_modules
+/servidor/node_modules
 /.pnp
 .pnp.*
 .yarn/*

@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
-import "./globals.css";
-import "./theme-overrides.css";
-import { LanguageSync } from "./preferences";
+import "./(views)/globals.css";
+import "./(views)/theme-overrides.css";
+import { LanguageSync } from "./(views)/legal/components/preferencias";
 
 export const metadata: Metadata = {
   title: "Sigil.IA | Ciberseguridad & telemetría vehicular",

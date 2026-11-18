@@ -1,38 +1,26 @@
-# SIGIL.IA
+# Sigil.IA
 
-## Frontend
+**Ciberseguridad y telemetría vehicular inteligente.**
 
-El frontend está organizado dentro de `app` usando el App Router de Next.js.
+Sigil.IA es una plataforma web para supervisar flotas, conductores y eventos de seguridad mediante telemetría vehicular. Integra sensores ESP32, GPS, análisis de eventos, autenticación multifactor y un panel administrativo conectado a PostgreSQL.
 
-### Portal informativo
+El proyecto está compuesto por un frontend desarrollado con Next.js y TypeScript, además de un backend con Express y PostgreSQL. Su objetivo es proporcionar información operativa y alertas para ayudar a proteger los vehículos y facilitar la gestión de una flota.
 
-La landing pública está disponible en `/informativo` y también es la ruta inicial (`/`). Se encuentra en `app/(views)/informativo` y presenta:
+## Inicio rápido
 
-- Navegación superior con anclas a proyecto, funcionamiento y funciones.
-- Accesos preparados para iniciar sesión y entrar al portal corporativo.
-- Hero con la propuesta de valor de Sigil.IA y llamadas a la acción.
-- Explicación visual de la arquitectura edge-computing: ESP32, inferencia inteligente y almacenamiento en AWS.
-- Sección de funciones y footer corporativo.
+```bash
+git clone https://github.com/Arman20252BIRD/Proyecto-Sigil.IA-Web.git
+npm install
+npm run dev
+```
 
-La página usa CSS Modules (`page.module.css`) para encapsular los estilos del portal. Los enlaces `/login` y `/login?tipo=corporativo` quedan preparados para la siguiente etapa: autenticación y creación de cuenta.
+El portal informativo estará disponible en `http://localhost:3000/informativo`.
 
-La documentación específica de este apartado está en [`app/(views)/informativo/README.md`](app/(views)/informativo/README.md).
-## paso 1:
-descargar el proyecto con git clone https://github.com/Arman20252BIRD/Proyecto-Sigil.IA-Web.git
+## Estructura principal
 
-## paso 2: 
-descargar las dependecias con npm install
-
-## paso 3:
-luego ejecutas con npm run dev.
-
-hola universo
-
-## Organización MVC
-
-- `app/(views)/`: vistas y componentes visuales de Next.js.
-- `servidor/controllers/frontend/`: controladores del frontend para peticiones y sesión.
-- `servidor/models/frontend/`: modelos reutilizables del frontend, incluido el procesamiento facial local.
-- `servidor/controllers/`: controladores HTTP de Express.
-- `servidor/models/`: conexión PostgreSQL y definición SQL del Modelo.
-- `public/`: recursos estáticos independientes de la lógica MVC.
+- `app/`: vistas, páginas y componentes del frontend Next.js.
+- `servidor/controllers/`: controladores HTTP del backend Express.
+- `servidor/models/`: conexión con PostgreSQL, modelos y scripts de base de datos.
+- `servidor/middleware/`: autenticación, autorización y validaciones intermedias.
+- `public/`: imágenes, logotipos, videos y otros recursos estáticos.
+- `docs/`: documentación técnica, legal y funcional del proyecto.

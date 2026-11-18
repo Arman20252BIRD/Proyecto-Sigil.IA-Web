@@ -521,14 +521,13 @@ function SideButton({ active, onClick, icon, badge, children }: { active: boolea
 function Metric({ label, value, detail, tone }: { label: string; value: string; detail: string; tone: string }) { return <article className={`${styles.metric} ${styles[`metric${tone}`]}`}><span>{label}</span><strong>{value}</strong><small>{detail}</small></article>; }
 
 function SummaryPanel({ activeCount, vehicleCount, events, gpsCount, onFleet }: { activeCount: number; vehicleCount: number; events: EventRecord[]; gpsCount: number; onFleet: () => void }) {
-  const [today, setToday] = useState<Date | null>(null);
-  const weekDays = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
-  useEffect(() => {
+  const [today] = useState(() => {
     const current = new Date();
     current.setHours(0, 0, 0, 0);
-    setToday(current);
-  }, []);
-  const dayBuckets = today ? Array.from({ length: 7 }, (_, index) => {
+    return current;
+  });
+  const weekDays = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
+  const dayBuckets = Array.from({ length: 7 }, (_, index) => {
     const date = new Date(today);
     const daysFromMonday = today.getDay() === 0 ? 6 : today.getDay() - 1;
     date.setDate(today.getDate() - daysFromMonday + index);
@@ -539,7 +538,7 @@ function SummaryPanel({ activeCount, vehicleCount, events, gpsCount, onFleet }: 
     }).length;
     const isToday = date.getTime() === today.getTime();
     return { key: date.toISOString(), label: `${weekDays[index]}${isToday ? " · Hoy" : ""}`, count, isToday };
-  }) : Array.from({ length: 7 }, (_, index) => ({ key: `empty-${index}`, label: "—", count: 0 }));
+  });
   const maxDailyEvents = Math.max(1, ...dayBuckets.map((day) => day.count));
   return <>
     <div className={styles.metrics}><Metric label="Unidades activas" value={String(activeCount).padStart(2, "0")} detail={`de ${vehicleCount} registradas`} tone="blue" /><Metric label="Eventos registrados" value={String(events.length).padStart(2, "0")} detail="actualizado desde la API" tone="cyan" /><Metric label="Unidades con GPS" value={String(activeCount).padStart(2, "0")} detail="última posición disponible" tone="green" /><Metric label="Conductores registrados" value={String(vehicleCount).padStart(2, "0")} detail="base de datos" tone="orange" /></div>

@@ -21,7 +21,7 @@ import { createDriver, getDrivers, updateDriver, deleteDriver } from './controll
 import { getEventsDashboard, getGpsTracking, ingestDeviceEvent } from './controllers/dashboard.controller';
 import { requireDeviceKey } from './middleware/device-auth.middleware';
 import { authorizeArcoWithGmail, gmailArcoCallback } from './controllers/gmail.controller';
-import { recordPrivacyNoticeAcceptance } from './controllers/privacy.controller';
+import { recordCookieDecision, recordPrivacyNoticeAcceptance } from './controllers/privacy.controller';
 import {
     requireAuth,
     requireEnrollmentSession,
@@ -78,6 +78,7 @@ app.post('/api/auth/setup-mfa', authRateLimit, requireMfaSetup, completeMfaSetup
 app.post('/api/auth/verify-facial', authRateLimit, requireMfaSession, verifyFacialMfa);
 app.post('/api/auth/verify-totp', authRateLimit, requireMfaSession, verifyTotpMfa);
 app.post('/api/privacy/notice/accept', authRateLimit, recordPrivacyNoticeAcceptance);
+app.post('/api/privacy/cookies/decision', recordCookieDecision);
 
 // --- RUTAS DE ADMINISTRADOR ---
 app.get('/api/admin', requireAuth, getAdminProfile);

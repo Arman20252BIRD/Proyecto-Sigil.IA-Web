@@ -11,12 +11,13 @@ import {
 } from "../preferencias";
 
 type OptionalConsent = {
-  analytics: boolean;
   preferences: boolean;
 };
+type CookieCategory = "necessary" | "preferences" | "services" | "analytics";
 
 const COOKIE_NAME = "sigil_cookie_consent";
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 180;
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
 function getConsentValue() {
   const cookie = document.cookie
@@ -30,6 +31,10 @@ function getConsentValue() {
   return value === "essential" || value === "all" || /^custom-[01]-[01]$/.test(value)
     ? value
     : null;
+}
+
+function allowsPreferences(value: string | null) {
+  return value === "all" || /^custom-[01]-1$/.test(value ?? "");
 }
 
 function subscribeToConsent(callback: () => void) {
@@ -49,16 +54,17 @@ function getAppliedUiPreferences() {
 }
 
 export default function CookieConsent() {
-  const consentValue = useSyncExternalStore(subscribeToConsent, getConsentValue, () => null);
+  const consentValue = useSyncExternalStore(subscribeToConsent, getConsentValue, () => "pending");
   const uiPreferences = useSyncExternalStore(subscribeToUiPreferences, getAppliedUiPreferences, () => "es-light");
   const [customizing, setCustomizing] = useState(false);
-  const [analytics, setAnalytics] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [preferences, setPreferences] = useState(false);
+  const [category, setCategory] = useState<CookieCategory>("necessary");
   const [language, theme] = uiPreferences.split("-") as [InterfaceLanguage, InterfaceTheme];
   const [saveError, setSaveError] = useState("");
 
   useEffect(() => {
-    if (consentValue !== null) return;
+    if (consentValue === "pending" || consentValue !== null) return;
 
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -68,12 +74,22 @@ export default function CookieConsent() {
     };
   }, [consentValue]);
 
+  useEffect(() => {
+    function openCookieSettings() {
+      if (consentValue === null || consentValue === "pending") return;
+      setPreferences(allowsPreferences(consentValue));
+      setCategory("necessary");
+      setSettingsOpen(true);
+      setCustomizing(true);
+    }
+
+    window.addEventListener("sigil:open-cookie-settings", openCookieSettings);
+    return () => window.removeEventListener("sigil:open-cookie-settings", openCookieSettings);
+  }, [consentValue]);
+
   function saveConsent(nextConsent: OptionalConsent) {
-    const value = nextConsent.analytics && nextConsent.preferences
-      ? "all"
-      : nextConsent.analytics || nextConsent.preferences
-        ? `custom-${Number(nextConsent.analytics)}-${Number(nextConsent.preferences)}`
-        : "essential";
+    const value = nextConsent.preferences ? "all" : "essential";
+    const previousConsent = getConsentValue();
     const secure = window.location.protocol === "https:" ? "; Secure" : "";
 
     document.cookie = `${COOKIE_NAME}=${value}; Path=/; Max-Age=${COOKIE_MAX_AGE}; SameSite=Lax${secure}`;
@@ -96,10 +112,28 @@ export default function CookieConsent() {
     }
 
     setSaveError("");
+    setSettingsOpen(false);
+    setCustomizing(false);
     window.dispatchEvent(new Event("sigil:cookie-consent"));
+
+    void fetch(`${API_URL}/api/privacy/cookies/decision`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        decision: value,
+        preferences: nextConsent.preferences,
+        version: "1.0",
+        source: previousConsent === null ? "initial" : "updated",
+      }),
+      keepalive: true,
+    }).catch(() => {
+      // La decisión local sigue siendo válida aunque el backend no esté disponible.
+    });
   }
 
-  if (consentValue !== null) return null;
+  if (consentValue === "pending") return null;
+
+  if (consentValue !== null && !settingsOpen) return null;
 
   return (
     <div className={styles.backdrop} role="presentation">
@@ -115,54 +149,65 @@ export default function CookieConsent() {
         <h2 id="cookie-consent-title">Consentimiento de cookies</h2>
         <p>
           Usamos cookies necesarias para que el sitio funcione. Si lo autorizas,
-          también podremos usar cookies de preferencias y análisis. Puedes cambiar
-          las categorías opcionales antes de guardar tu elección.
+          también podremos usar cookies de preferencias para recordar el idioma y la apariencia.
+          Puedes cambiar tu elección antes de guardarla.
         </p>
       </div>
 
       {customizing && (
-        <div id="cookie-preferences" className={styles.preferences} aria-label="Preferencias de cookies">
-          <label className={styles.preference}>
-            <span><strong>Cookies necesarias</strong><small>Requeridas para el funcionamiento del sitio.</small></span>
-            <input type="checkbox" checked disabled aria-label="Cookies necesarias activas" />
-          </label>
-          <label className={styles.preference}>
-            <span><strong>Cookies de preferencias</strong><small>Recuerdan opciones como el idioma o la apariencia.</small></span>
-            <input type="checkbox" checked={preferences} onChange={(event) => setPreferences(event.target.checked)} />
-          </label>
-          <div className={styles.interfacePreferences}>
-            <label htmlFor="cookie-language">Idioma de la página</label>
-            <select
-              id="cookie-language"
-              value={language}
-              disabled={!preferences}
-              onChange={(event) => {
-                const nextLanguage = event.target.value as InterfaceLanguage;
-                applyInterfacePreferences({ language: nextLanguage, theme });
-              }}
-            >
-              <option value="es">Español</option>
-              <option value="en">English</option>
-            </select>
-            <label htmlFor="cookie-theme">Apariencia de la página</label>
-            <select
-              id="cookie-theme"
-              value={theme}
-              disabled={!preferences}
-              onChange={(event) => {
-                const nextTheme = event.target.value as InterfaceTheme;
-                applyInterfacePreferences({ language, theme: nextTheme });
-              }}
-            >
-              <option value="light">Claro</option>
-              <option value="dark">Oscuro</option>
-            </select>
-            <small>Activa las cookies de preferencias para guardar estos cambios.</small>
+        <div id="cookie-preferences" className={styles.preferences} aria-label="Configuración de cookies">
+          <nav className={styles.categoryNav} aria-label="Categorías de cookies">
+            {([
+              ["necessary", "Cookies para el funcionamiento de la web"],
+              ["preferences", "Cookies de preferencias"],
+              ["services", "Cookies para servicios"],
+              ["analytics", "Cookies analíticas y publicitarias"],
+            ] as Array<[CookieCategory, string]>).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                className={category === id ? styles.categoryActive : styles.categoryButton}
+                onClick={() => setCategory(id)}
+              >
+                {label}
+              </button>
+            ))}
+          </nav>
+          <div className={styles.categoryPanel}>
+            {category === "necessary" && <>
+              <p className={styles.categoryIntro}>Se utilizan para controlar la aparición y aceptación del aviso de cookies y para el funcionamiento básico del portal.</p>
+              <CookieStatusRow title="Aviso de consentimiento" description="Recuerda la decisión elegida para no mostrar el aviso en cada visita." status="Siempre activas" />
+              <CookieStatusRow title="Cookies de sesión" description="La autenticación del administrador se conserva temporalmente en sessionStorage, no en una cookie de seguimiento." status="Siempre activas" />
+            </>}
+            {category === "preferences" && <>
+              <p className={styles.categoryIntro}>Se utilizan para recordar las opciones de personalización que elijas en la interfaz.</p>
+              <label className={styles.preferenceToggle}>
+                <span><strong>Cookies de idioma y apariencia</strong><small>Permiten conservar el idioma y el modo claro u oscuro.</small></span>
+                <input type="checkbox" checked={preferences} onChange={(event) => setPreferences(event.target.checked)} />
+              </label>
+              <div className={styles.interfacePreferences}>
+                <label htmlFor="cookie-language">Idioma de la página</label>
+                <select id="cookie-language" value={language} disabled={!preferences} onChange={(event) => applyInterfacePreferences({ language: event.target.value as InterfaceLanguage, theme })}>
+                  <option value="es">Español</option><option value="en">English</option>
+                </select>
+                <label htmlFor="cookie-theme">Apariencia de la página</label>
+                <select id="cookie-theme" value={theme} disabled={!preferences} onChange={(event) => applyInterfacePreferences({ language, theme: event.target.value as InterfaceTheme })}>
+                  <option value="light">Claro</option><option value="dark">Oscuro</option>
+                </select>
+                <small>Si no las aceptas, la página utilizará español y modo claro.</small>
+              </div>
+            </>}
+            {category === "services" && <>
+              <p className={styles.categoryIntro}>Estos servicios no se cargan para analizar tu navegación. Solo se solicitan cuando utilizas una función específica.</p>
+              <CookieStatusRow title="Gmail API / OAuth" description="Prepara y envía solicitudes de derechos ARCO desde la cuenta autorizada." status="Bajo demanda" />
+              <CookieStatusRow title="OpenStreetMap" description="Muestra la ubicación GPS cuando consultas un conductor con evento activo." status="Bajo demanda" />
+            </>}
+            {category === "analytics" && <>
+              <p className={styles.categoryIntro}>Sigil.IA no utiliza herramientas de analítica, publicidad ni seguimiento de terceros.</p>
+              <CookieStatusRow title="Google Analytics" description="No está instalado y no se generan cookies _ga ni _ga_* en este proyecto." status="No utilizadas" />
+              <CookieStatusRow title="Cookies publicitarias" description="No se crean perfiles publicitarios ni se comparten datos de navegación con anunciantes." status="No utilizadas" />
+            </>}
           </div>
-          <label className={styles.preference}>
-            <span><strong>Cookies de análisis</strong><small>Ayudan a comprender cómo se utiliza el sitio.</small></span>
-            <input type="checkbox" checked={analytics} onChange={(event) => setAnalytics(event.target.checked)} />
-          </label>
         </div>
       )}
 
@@ -171,13 +216,13 @@ export default function CookieConsent() {
       <div className={styles.actions}>
         {!customizing ? (
           <>
-            <button className={styles.secondaryButton} onClick={() => saveConsent({ analytics: false, preferences: false })}>
-              Aceptar solo las necesarias
+            <button className={styles.secondaryButton} onClick={() => saveConsent({ preferences: false })}>
+              Rechazar cookies opcionales
             </button>
             <button className={styles.secondaryButton} aria-expanded={false} aria-controls="cookie-preferences" onClick={() => setCustomizing(true)}>
               Personalizar
             </button>
-            <button className={styles.primaryButton} onClick={() => saveConsent({ analytics: true, preferences: true })}>
+            <button className={styles.primaryButton} onClick={() => saveConsent({ preferences: true })}>
               Aceptar todas
             </button>
           </>
@@ -186,7 +231,7 @@ export default function CookieConsent() {
             <button className={styles.secondaryButton} aria-expanded={customizing} aria-controls="cookie-preferences" onClick={() => setCustomizing(false)}>
               Ocultar opciones
             </button>
-            <button className={styles.primaryButton} onClick={() => saveConsent({ analytics, preferences })}>
+            <button className={styles.primaryButton} onClick={() => saveConsent({ preferences })}>
               Guardar preferencias
             </button>
           </>
@@ -195,4 +240,8 @@ export default function CookieConsent() {
       </aside>
     </div>
   );
+}
+
+function CookieStatusRow({ title, description, status }: { title: string; description: string; status: string }) {
+  return <div className={styles.statusRow}><div><strong>{title}</strong><small>{description}</small></div><span>{status}</span></div>;
 }

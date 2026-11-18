@@ -1,0 +1,16 @@
+.page { min-height: 100vh; color: #131b2e; background: linear-gradient(135deg, #f7f8ff, #fff 55%, #eef2ff); font-family: Arial, Helvetica, sans-serif; }
+.header { display: flex; align-items: center; justify-content: space-between; min-height: 144px; padding: 18px max(24px, calc((100% - 1120px) / 2)); background: #fff; border-bottom: 1px solid #d5d8e5; }
+.brand { display: block; width: 225px; height: 100px; }
+.brand img { display: block; width: 225px; height: 100px; object-fit: contain; }
+.header a:last-child { color: #0037b0; font-size: 12px; text-decoration: none; }
+.header a:last-child:hover { text-decoration: underline; }
+.version { color: #606477; font-size: 11px; }
+.document { max-width: 920px; margin: 42px auto 70px; padding: 44px 52px; background: #fff; border: 1px solid #d5d8e5; border-radius: 16px; box-shadow: 0 18px 45px #131b2e12; }
+.kicker { color: #0037b0; font-size: 10px; font-weight: 800; letter-spacing: .12em; }
+.document h1 { margin: 12px 0 12px; font-size: 42px; letter-spacing: -.06em; }
+.intro { margin: 0 0 34px; color: #606477; font-size: 16px; line-height: 1.7; }
+.document section { padding: 22px 0; border-top: 1px solid #e5e8f2; }
+.document h2 { margin: 0 0 9px; font-size: 18px; }
+.document p { margin: 0; color: #434655; font-size: 13px; line-height: 1.8; white-space: pre-line; }
+.document a { color: #0037b0; }
+@media (max-width: 700px) { .header { align-items: flex-start; gap: 10px; flex-direction: column; } .document { margin: 24px 16px 50px; padding: 28px 22px; } .document h1 { font-size: 34px; } .version { font-size: 10px; } }

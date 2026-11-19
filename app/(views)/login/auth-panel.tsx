@@ -10,6 +10,8 @@ type Tab = "login" | "register";
 type FaceState = "idle" | "camera" | "processing" | "captured";
 type Enrollment = { token: string; otpAuthUrl: string };
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+const PRIVACY_NOTICE_COOKIE = "sigil_privacy_notice";
+const PRIVACY_NOTICE_COOKIE_MAX_AGE = 60 * 60 * 24 * 180;
 
 type PasswordRequirements = {
   length: boolean;
@@ -59,7 +61,8 @@ export default function AuthPanel({ initialResetToken = "" }: { initialResetToke
   const [capturedFaceDescriptor, setCapturedFaceDescriptor] = useState<number[] | null>(null);
   const [registrationPassword, setRegistrationPassword] = useState("");
   const [registrationPasswordConfirm, setRegistrationPasswordConfirm] = useState("");
-  const [privacyNoticeOpen, setPrivacyNoticeOpen] = useState(true);
+  const [privacyNoticeOpen, setPrivacyNoticeOpen] = useState(false);
+  const [privacyNoticeReady, setPrivacyNoticeReady] = useState(false);
   const [privacyNoticeAccepted, setPrivacyNoticeAccepted] = useState(false);
   const [privacyConsentStatus, setPrivacyConsentStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [detectedFaceBox, setDetectedFaceBox] = useState<DetectedFaceBox | null>(null);
@@ -69,6 +72,27 @@ export default function AuthPanel({ initialResetToken = "" }: { initialResetToke
   const passwordRequirements = getPasswordRequirements(registrationPassword);
   const passwordsMatch = registrationPassword.length > 0
     && registrationPassword === registrationPasswordConfirm;
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const hasAcceptedPrivacyNotice = document.cookie
+        .split(";")
+        .map((entry) => entry.trim())
+        .some((entry) => entry === `${PRIVACY_NOTICE_COOKIE}=accepted`);
+
+      if (hasAcceptedPrivacyNotice) {
+        setPrivacyNoticeAccepted(true);
+        setPrivacyConsentStatus("saved");
+        setPrivacyNoticeOpen(false);
+      } else {
+        setPrivacyNoticeOpen(true);
+      }
+
+      setPrivacyNoticeReady(true);
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, []);
 
   useEffect(() => () => {
     streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -88,6 +112,7 @@ export default function AuthPanel({ initialResetToken = "" }: { initialResetToke
     setPrivacyNoticeAccepted(accepted);
     if (!accepted) {
       setPrivacyConsentStatus("idle");
+      document.cookie = `${PRIVACY_NOTICE_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`;
       return;
     }
 
@@ -99,6 +124,8 @@ export default function AuthPanel({ initialResetToken = "" }: { initialResetToke
         body: JSON.stringify({ accepted: true, version: "1.0" }),
       });
       if (!response.ok) throw new Error("privacy-consent-not-recorded");
+      const secure = window.location.protocol === "https:" ? "; Secure" : "";
+      document.cookie = `${PRIVACY_NOTICE_COOKIE}=accepted; Path=/; Max-Age=${PRIVACY_NOTICE_COOKIE_MAX_AGE}; SameSite=Lax${secure}`;
       setPrivacyConsentStatus("saved");
     } catch {
       setPrivacyNoticeAccepted(false);
@@ -689,7 +716,7 @@ export default function AuthPanel({ initialResetToken = "" }: { initialResetToke
       )}
 
       {notice && <p className={styles.notice} role="status">{notice}</p>}
-      {privacyNoticeOpen && (
+      {privacyNoticeReady && privacyNoticeOpen && (
         <div className={styles.privacyOverlay} role="presentation">
           <section className={styles.privacyModal} role="dialog" aria-modal="true" aria-labelledby="privacy-title">
             <span className={styles.kicker}>INFORMACIÓN LEGAL · VERSIÓN 1.0</span>

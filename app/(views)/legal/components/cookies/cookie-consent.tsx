@@ -161,7 +161,7 @@ export default function CookieConsent() {
               ["necessary", "Cookies para el funcionamiento de la web"],
               ["preferences", "Cookies de preferencias"],
               ["services", "Cookies para servicios"],
-              ["analytics", "Cookies analíticas y publicitarias"],
+              ["analytics", "Cookies analíticas"],
             ] as Array<[CookieCategory, string]>).map(([id, label]) => (
               <button
                 key={id}
@@ -203,8 +203,8 @@ export default function CookieConsent() {
               <CookieStatusRow title="OpenStreetMap" description="Muestra la ubicación GPS cuando consultas un conductor con evento activo." status="Bajo demanda" />
             </>}
             {category === "analytics" && <>
-              <p className={styles.categoryIntro}>Sigil.IA no utiliza herramientas de analítica, publicidad ni seguimiento de terceros.</p>
-              <CookieStatusRow title="Google Analytics" description="No está instalado y no se generan cookies _ga ni _ga_* en este proyecto." status="No utilizadas" />
+              <p className={styles.categoryIntro}>Se utilizan, con tu autorización, para obtener estadísticas generales de uso y mejorar la plataforma. No se emplean para publicidad personalizada.</p>
+              <CookieStatusRow title="Google Analytics" description="Permite medir visitas, interacciones y datos técnicos de navegación cuando aceptas las cookies analíticas." status="Opcionales" />
               <CookieStatusRow title="Cookies publicitarias" description="No se crean perfiles publicitarios ni se comparten datos de navegación con anunciantes." status="No utilizadas" />
             </>}
           </div>

@@ -20,8 +20,15 @@
    ```powershell
    createdb -U postgres sigil_db
    psql -U postgres -d sigil_db -f .\servidor\models\base-datos\schema.sql
-   psql -U postgres -d sigil_db -f .\servidor\models\base-datos\seed.sql
+   psql -U postgres -d sigil_db -v ON_ERROR_STOP=1 -f .\servidor\models\base-datos\audit-log-append-only.sql
+   psql -U postgres -d sigil_db -v ON_ERROR_STOP=1 -v allow_demo_seed=on -f .\servidor\models\base-datos\seed.sql
    ```
+
+   La migración `audit-log-append-only.sql` es necesaria también para bases
+   existentes: bloquea cambios y borrados de auditoría desde PostgreSQL.
+   El seed contiene la cuenta y datos ficticios de demostración. Es solo para
+   desarrollo/QA y se bloquea por defecto; no lo ejecutes contra producción.
+   La opción `allow_demo_seed=on` es una confirmación explícita para la base local.
 
    Si ya tenías una base de datos antes de agregar la separación de conductores por administrador, aplica también la migración:
 
@@ -65,10 +72,18 @@
 | POST | `/api/auth/verify-facial` | Comparar descriptor facial con la plantilla cifrada |
 | POST | `/api/auth/verify-totp` | Alternativa de autenticación RFC 6238 |
 | GET / PUT | `/api/admin/:id` | Consultar/actualizar el perfil del administrador |
+| GET | `/api/admin/audit-logs` | Consultar el historial inmutable del administrador autenticado |
 | GET / POST | `/api/drivers` | Listar/registrar conductores |
 | PUT / DELETE | `/api/drivers/:id` | Actualizar/eliminar conductores |
 | GET | `/api/dashboard/events` | Consultar eventos |
 | GET | `/api/dashboard/gps` | Consultar posición GPS |
+
+El historial registra los inicios de sesión completados y los cambios de
+conductores y perfil; la consulta se limita al administrador autenticado. La
+migración bloquea `UPDATE`, `DELETE` y `TRUNCATE`, pero un propietario o
+superusuario de PostgreSQL puede desactivar los triggers. En producción, el
+usuario de la aplicación debe ser un rol restringido, sin propiedad de la tabla
+ni privilegios de superusuario.
 
 El descriptor facial nunca se retorna desde el backend. Las respuestas no contienen el secreto TOTP excepto en la URI de configuración entregada inmediatamente después de validar la contraseña. Los endpoints de setup/MFA requieren tokens temporales específicos.
 
@@ -78,4 +93,13 @@ Las rutas de conductores validan los campos y estados operativos, rechazan ident
 
 ## Postman
 
-Importa `servidor/controllers/pruebas-api/Sigil-API.postman_collection.json`. La colección prueba health, login, rate/auth y rutas protegidas. La configuración TOTP se confirma ingresando manualmente el código mostrado en tu autenticador. Postman no puede generar una muestra biométrica genuina ni verificar el reto de cámara; prueba el enrolamiento/reconocimiento facial desde `/login`.
+Importa `servidor/controllers/pruebas-api/Sigil-API.postman_collection.json` para
+ejecutar pruebas negativas y positivas. El flujo QA obtiene una sesión con
+credenciales locales y TOTP; después, las lecturas protegidas esperan `200`.
+La carpeta de operaciones QA actualiza el perfil sin cambiar sus valores y hace
+un ciclo crear/actualizar/eliminar para un conductor temporal, solo en localhost
+y con `allowLocalTestWrites=yes`. Consulta
+`servidor/controllers/pruebas-api/README.md` para configurar el entorno y ejecutar
+las solicitudes paso a paso. El registro con descriptor facial, restablecimientos,
+telemetría y envíos de correo requieren pruebas manuales en QA; el enrolamiento
+biométrico se realiza desde `/login`.

@@ -7,6 +7,7 @@ $psqlExe = 'C:\Program Files\PostgreSQL\18\bin\psql.exe'
 $createdbExe = 'C:\Program Files\PostgreSQL\18\bin\createdb.exe'
 $hbaPath = Join-Path $dataDirectory 'pg_hba.conf'
 $schemaPath = Join-Path $projectRoot 'models\base-datos\schema.sql'
+$auditLogMigrationPath = Join-Path $projectRoot 'models\base-datos\audit-log-append-only.sql'
 $seedPath = Join-Path $projectRoot 'models\base-datos\seed.sql'
 $environmentFile = Join-Path $projectRoot '.env'
 $originalHbaBytes = $null
@@ -21,7 +22,7 @@ try {
         throw 'Run this script from an elevated PowerShell window.'
     }
 
-    foreach ($path in @($psqlExe, $createdbExe, $hbaPath, $schemaPath, $seedPath)) {
+    foreach ($path in @($psqlExe, $createdbExe, $hbaPath, $schemaPath, $auditLogMigrationPath, $seedPath)) {
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
             throw "Required PostgreSQL file not found: $path"
         }
@@ -162,7 +163,12 @@ try {
             throw 'Could not apply the SIGIL.IA database schema.'
         }
 
-        & $psqlExe -w -X -v ON_ERROR_STOP=1 -h 127.0.0.1 -p 5432 -U postgres -d sigil_db -f $seedPath 2>&1 | Out-Null
+        & $psqlExe -w -X -v ON_ERROR_STOP=1 -h 127.0.0.1 -p 5432 -U postgres -d sigil_db -f $auditLogMigrationPath 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Could not make audit logs append-only.'
+        }
+
+        & $psqlExe -w -X -v ON_ERROR_STOP=1 -v allow_demo_seed=on -h 127.0.0.1 -p 5432 -U postgres -d sigil_db -f $seedPath 2>&1 | Out-Null
         if ($LASTEXITCODE -ne 0) {
             throw 'Could not apply the SIGIL.IA demo data seed.'
         }

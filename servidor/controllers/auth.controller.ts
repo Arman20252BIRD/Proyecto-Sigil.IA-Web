@@ -9,7 +9,7 @@ import { decryptFaceData, encryptFaceData } from '../models/face-data';
 import type { AuthRequest } from '../middleware/auth.middleware';
 import jwt from 'jsonwebtoken';
 import { createHash, randomBytes } from 'node:crypto';
-import { writeAuditLog } from '../models/audit-log.model';
+import { insertAuditLog, writeAuditLog } from '../models/audit-log.model';
 
 const FACE_DESCRIPTOR_LENGTH = 1024;
 const FACE_MATCH_THRESHOLD = 0.5;
@@ -186,10 +186,14 @@ export const registerAdmin = async (req: Request, res: Response): Promise<void> 
             ]
         );
 
-        await writeAuditLog(req, {
+        const recorded = await writeAuditLog(req, {
             action: 'REGISTRATION_STARTED',
             details: { email: normalizedEmail, privacyVersion: PRIVACY_NOTICE_VERSION },
         });
+        if (!recorded) {
+            res.status(503).json({ error: 'No fue posible registrar el inicio del proceso de alta.' });
+            return;
+        }
 
         const identity: AdminIdentity = { id: '0', email: pending.rows[0].email, nombre: nombre.trim() };
         res.status(201).json({
@@ -294,6 +298,11 @@ export const verifyRegistrationTotp = async (req: AuthRequest, res: Response): P
             );
             await client.query(
                 `INSERT INTO audit_logs (admin_id, action, resource_type, resource_id, details, ip_address, user_agent)
+                 VALUES ($1, 'LOGIN_SUCCESS', 'admin', $2, $3::jsonb, $4, $5)`,
+                [admin.id, admin.id, JSON.stringify({ method: 'totp', registration: true }), req.ip ?? null, req.get('user-agent') ?? null],
+            );
+            await client.query(
+                `INSERT INTO audit_logs (admin_id, action, resource_type, resource_id, details, ip_address, user_agent)
                  VALUES ($1, 'PRIVACY_NOTICE_ACCEPTED', 'privacy_notice', $2, $3::jsonb, $4, $5)`,
                 [admin.id, pending.privacy_notice_version ?? PRIVACY_NOTICE_VERSION, JSON.stringify({ version: pending.privacy_notice_version ?? PRIVACY_NOTICE_VERSION }), req.ip ?? null, req.get('user-agent') ?? null],
             );
@@ -342,14 +351,36 @@ export const loginStepOne = async (req: Request, res: Response): Promise<void> =
     try {
         const result = await pool.query(
             `SELECT id, nombre, email, password, face_template_encrypted, totp_secret_encrypted,
-                    totp_enabled, mfa_facial_status, mfa_locked_until
+                    totp_enabled, mfa_facial_status, mfa_locked_until, account_status
              FROM admins WHERE email = $1`,
             [email.trim().toLowerCase()]
         );
         const admin = result.rows[0];
+        if (admin && admin.account_status === 'cancelled') {
+            await writeAuditLog(req, {
+                adminId: admin.id,
+                action: 'LOGIN_BLOCKED_CANCELLED',
+                resourceType: 'admin',
+                resourceId: admin.id,
+                details: { reason: 'account_cancelled' },
+                success: false,
+                failureReason: 'account_cancelled',
+            });
+            res.status(403).json({ error: 'Esta cuenta fue dada de baja y no puede iniciar sesión.' });
+            return;
+        }
 
         if (!admin || !(await bcrypt.compare(password, admin.password))) {
-            void writeAuditLog(req, { action: 'LOGIN_FAILED', details: { email: typeof email === 'string' ? email.trim().toLowerCase() : null }, success: false, failureReason: 'invalid_credentials' });
+            const recorded = await writeAuditLog(req, {
+                action: 'LOGIN_FAILED',
+                details: { email: email.trim().toLowerCase() },
+                success: false,
+                failureReason: 'invalid_credentials',
+            });
+            if (!recorded) {
+                res.status(503).json({ error: 'No fue posible registrar el intento de acceso.' });
+                return;
+            }
             res.status(401).json({ error: 'Credenciales inválidas.' });
             return;
         }
@@ -357,7 +388,16 @@ export const loginStepOne = async (req: Request, res: Response): Promise<void> =
 
         const identity = identityFromRow(admin);
         const mfaJti = randomUUID();
-        void writeAuditLog(req, { adminId: admin.id, action: 'LOGIN_CREDENTIALS_VERIFIED', resourceType: 'admin', resourceId: admin.id });
+        const recorded = await writeAuditLog(req, {
+            adminId: admin.id,
+            action: 'LOGIN_CREDENTIALS_VERIFIED',
+            resourceType: 'admin',
+            resourceId: admin.id,
+        });
+        if (!recorded) {
+            res.status(503).json({ error: 'No fue posible registrar el intento de acceso.' });
+            return;
+        }
 
         if (!admin.totp_enabled || !admin.totp_secret_encrypted) {
             const totpSecret = generateSecret();
@@ -453,6 +493,18 @@ export const completeMfaSetup = async (req: AuthRequest, res: Response): Promise
             return;
         }
 
+        const recorded = await writeAuditLog(req, {
+            adminId: admin.id,
+            action: 'LOGIN_SUCCESS',
+            resourceType: 'admin',
+            resourceId: admin.id,
+            details: { method: 'totp', initialSetup: true },
+        });
+        if (!recorded) {
+            res.status(503).json({ error: 'No fue posible registrar el inicio de sesión.' });
+            return;
+        }
+
         const identity = identityFromRow(updated.rows[0]);
         res.json({
             success: true,
@@ -512,6 +564,17 @@ export const verifyFacialMfa = async (req: AuthRequest, res: Response): Promise<
             res.status(401).json({ error: 'La sesión MFA ya fue usada, expiró o está bloqueada.' });
             return;
         }
+        const recorded = await writeAuditLog(req, {
+            adminId: admin.id,
+            action: 'LOGIN_SUCCESS',
+            resourceType: 'admin',
+            resourceId: admin.id,
+            details: { method: 'facial' },
+        });
+        if (!recorded) {
+            res.status(503).json({ error: 'No fue posible registrar el inicio de sesión.' });
+            return;
+        }
         res.json({
             success: true,
             message: 'Reconocimiento facial verificado.',
@@ -564,6 +627,17 @@ export const verifyTotpMfa = async (req: AuthRequest, res: Response): Promise<vo
         if (!(await consumeMfaSession(admin.id, admin.mfaJti, verification.timeStep))) {
             await recordMfaFailure(admin.id, admin.mfaJti);
             res.status(401).json({ error: 'El código autenticador ya fue utilizado o la sesión MFA expiró.' });
+            return;
+        }
+        const recorded = await writeAuditLog(req, {
+            adminId: admin.id,
+            action: 'LOGIN_SUCCESS',
+            resourceType: 'admin',
+            resourceId: admin.id,
+            details: { method: 'totp' },
+        });
+        if (!recorded) {
+            res.status(503).json({ error: 'No fue posible registrar el inicio de sesión.' });
             return;
         }
         res.json({
@@ -754,6 +828,13 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
              WHERE id = $2`,
             [passwordHash, reset.admin_id]
         );
+        await insertAuditLog(client, req, {
+            adminId: reset.admin_id,
+            action: 'PASSWORD_RESET_COMPLETED',
+            resourceType: 'admin',
+            resourceId: reset.admin_id,
+            details: { method: 'totp' },
+        });
         await client.query('DELETE FROM password_reset_tokens WHERE admin_id = $1', [reset.admin_id]);
         await client.query('COMMIT');
         res.json({ success: true, message: 'Contraseña actualizada. Ya puedes iniciar sesión.' });

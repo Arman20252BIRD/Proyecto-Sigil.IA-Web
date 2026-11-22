@@ -2,7 +2,6 @@
 import { Request, Response } from 'express';
 import { pool } from '../models/db';
 import type { AuthRequest } from '../middleware/auth.middleware';
-import { writeAuditLog } from '../models/audit-log.model';
 
 type DeviceEventInput = {
     hardware_id?: string;
@@ -27,7 +26,6 @@ export const getEventsDashboard = async (req: AuthRequest, res: Response): Promi
             ORDER BY e.created_at DESC;
         `;
         const result = await pool.query(query, [adminId]);
-        void writeAuditLog(req, { adminId, action: 'EVENTS_VIEWED', resourceType: 'event', details: { count: result.rows.length } });
         res.json(result.rows);
     } catch (error) {
         res.status(500).json({ error: 'Error al obtener el historial de eventos' });
@@ -47,7 +45,6 @@ export const getGpsTracking = async (req: AuthRequest, res: Response): Promise<v
             ORDER BY gt.vehicle_id, gt.timestamp DESC;
         `;
         const result = await pool.query(query, [adminId]);
-        void writeAuditLog(req, { adminId, action: 'GPS_VIEWED', resourceType: 'gps_track', details: { count: result.rows.length } });
         res.json(result.rows);
     } catch (error) {
         res.status(500).json({ error: 'Error al obtener la geolocalización satelital' });

@@ -5,6 +5,12 @@ const CONTACT_EMAIL = 'sigil.ia.soporte@gmail.com';
 const STATE_TTL_MS = 10 * 60 * 1000;
 const MAX_ATTACHMENT_SIZE = 5 * 1024 * 1024;
 const MAX_TOTAL_ATTACHMENTS = 10 * 1024 * 1024;
+const ARCO_RIGHTS = new Set(['acceso', 'rectificacion', 'cancelacion', 'oposicion']);
+const ALLOWED_ATTACHMENT_TYPES = new Set([
+    'application/pdf',
+    'image/png',
+    'image/jpeg',
+]);
 
 type ArcoAttachment = { filename: string; mimeType: string; dataBase64: string };
 type ArcoRequest = {
@@ -32,6 +38,24 @@ function getConfig(): { clientId: string; clientSecret: string; redirectUri: str
 
 function isEmail(value: unknown): value is string {
     return typeof value === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+}
+
+function isArcoRight(value: unknown): value is string {
+    return typeof value === 'string' && ARCO_RIGHTS.has(value.trim().toLowerCase());
+}
+
+function safeMimeHeaderValue(value: string): string {
+    return value.replace(/[\r\n\x00-\x1f\x7f]/g, '').replace(/["]/g, '').trim().slice(0, 160);
+}
+
+function escapeHtml(value: string): string {
+    return value.replace(/[&<>"']/g, (character) => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;',
+    })[character] ?? character);
 }
 
 function encodeState(payload: Pick<ArcoRequest, 'contacto' | 'createdAt' | 'nonce'>, secret: string): string {
@@ -78,9 +102,18 @@ function parseAttachments(value: unknown): { attachments?: ArcoAttachment[]; err
     for (const item of value) {
         if (typeof item !== 'object' || item === null) return { error: 'Uno de los archivos no es válido.' };
         const file = item as Record<string, unknown>;
-        const filename = typeof file.filename === 'string' ? file.filename.replace(/[\\/\r\n]/g, '').trim().slice(0, 120) : '';
-        const mimeType = typeof file.mimeType === 'string' ? file.mimeType.slice(0, 100) : 'application/octet-stream';
+        const filename = typeof file.filename === 'string'
+            ? file.filename.replace(/[\\/\r\n"]/g, '').replace(/[^\w.\s-]/g, '').trim().slice(0, 120)
+            : '';
+        const rawMimeType = typeof file.mimeType === 'string' ? file.mimeType.trim().toLowerCase() : '';
+        if (!ALLOWED_ATTACHMENT_TYPES.has(rawMimeType)) {
+            return { error: 'Solo se permiten archivos PDF, PNG o JPG.' };
+        }
+        const mimeType = rawMimeType;
         const dataBase64 = typeof file.dataBase64 === 'string' ? file.dataBase64 : '';
+        if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(dataBase64)) {
+            return { error: 'El contenido adjunto no es válido.' };
+        }
         const bytes = Math.floor(dataBase64.length * 0.75);
         if (!filename || !dataBase64 || bytes > MAX_ATTACHMENT_SIZE) return { error: 'Cada archivo debe pesar como máximo 5 MB.' };
         total += bytes;
@@ -105,7 +138,7 @@ export function authorizeArcoWithGmail(req: Request, res: Response): void {
     const { nombre, contacto, derecho, solicitudHtml, solicitudText } = req.body ?? {};
     const parsedAttachments = parseAttachments(req.body?.attachments);
     if (typeof nombre !== 'string' || nombre.trim().length < 2 || !isEmail(contacto)
-        || typeof derecho !== 'string' || typeof solicitudHtml !== 'string' || typeof solicitudText !== 'string'
+        || !isArcoRight(derecho) || typeof solicitudHtml !== 'string' || typeof solicitudText !== 'string'
         || !solicitudText.trim() || parsedAttachments.error) {
         res.status(400).json({ error: parsedAttachments.error ?? 'Completa los datos de la solicitud ARCO antes de continuar con Gmail.' });
         return;
@@ -115,7 +148,7 @@ export function authorizeArcoWithGmail(req: Request, res: Response): void {
     const draft: ArcoRequest = {
         nombre: nombre.trim().slice(0, 160),
         contacto: contacto.trim().toLowerCase(),
-        derecho: derecho.trim().slice(0, 40),
+        derecho: safeMimeHeaderValue(derecho.trim().toLowerCase()).slice(0, 40),
         solicitudHtml: cleanHtml(solicitudHtml).slice(0, 12000),
         solicitudText: solicitudText.trim().slice(0, 5000),
         attachments: parsedAttachments.attachments ?? [],
@@ -139,27 +172,31 @@ export function authorizeArcoWithGmail(req: Request, res: Response): void {
 function encodeMimeMessage(payload: ArcoRequest): string {
     const mixedBoundary = `sigil-mixed-${crypto.randomUUID()}`;
     const alternativeBoundary = `sigil-alt-${crypto.randomUUID()}`;
+    const safeNombre = escapeHtml(safeMimeHeaderValue(payload.nombre));
+    const safeContacto = escapeHtml(safeMimeHeaderValue(payload.contacto));
+    const safeDerecho = safeMimeHeaderValue(payload.derecho);
     const lines = [
         `To: ${CONTACT_EMAIL}`,
-        `Subject: Solicitud de derecho ARCO - ${payload.derecho}`,
+        `Subject: Solicitud de derecho ARCO - ${safeDerecho}`,
         `Content-Type: multipart/mixed; boundary="${mixedBoundary}"`,
         'MIME-Version: 1.0', '',
         `--${mixedBoundary}`,
         `Content-Type: multipart/alternative; boundary="${alternativeBoundary}"`, '',
         `--${alternativeBoundary}`,
         'Content-Type: text/plain; charset="UTF-8"', '',
-        `Nombre completo: ${payload.nombre}`,
-        `Correo de contacto: ${payload.contacto}`,
-        `Derecho solicitado: ${payload.derecho}`, '',
+        `Nombre completo: ${safeNombre}`,
+        `Correo de contacto: ${safeContacto}`,
+        `Derecho solicitado: ${safeDerecho}`, '',
         'Descripción de la solicitud:', payload.solicitudText, '',
         `--${alternativeBoundary}`,
         'Content-Type: text/html; charset="UTF-8"', '',
-        `<p><strong>Nombre completo:</strong> ${payload.nombre}</p><p><strong>Correo de contacto:</strong> <a href="mailto:${payload.contacto}">${payload.contacto}</a></p><p><strong>Derecho solicitado:</strong> ${payload.derecho}</p><p><strong>Descripción de la solicitud:</strong></p>${payload.solicitudHtml}`,
+        `<p><strong>Nombre completo:</strong> ${safeNombre}</p><p><strong>Correo de contacto:</strong> <a href="mailto:${safeContacto}">${safeContacto}</a></p><p><strong>Derecho solicitado:</strong> ${safeDerecho}</p><p><strong>Descripción de la solicitud:</strong></p>${payload.solicitudHtml}`,
         `--${alternativeBoundary}--`,
     ];
     for (const attachment of payload.attachments) {
         const wrappedBase64 = attachment.dataBase64.match(/.{1,76}/g)?.join('\r\n') ?? '';
-        lines.push(`--${mixedBoundary}`, `Content-Type: ${attachment.mimeType}; name="${attachment.filename}"`, 'Content-Transfer-Encoding: base64', `Content-Disposition: attachment; filename="${attachment.filename}"`, '', wrappedBase64);
+        const safeFilename = safeMimeHeaderValue(attachment.filename);
+        lines.push(`--${mixedBoundary}`, `Content-Type: ${attachment.mimeType}; name="${safeFilename}"`, 'Content-Transfer-Encoding: base64', `Content-Disposition: attachment; filename="${safeFilename}"`, '', wrappedBase64);
     }
     lines.push(`--${mixedBoundary}--`);
     return Buffer.from(lines.join('\r\n'), 'utf8').toString('base64url');

@@ -2,7 +2,7 @@
 import { Request, Response } from 'express';
 import { pool } from '../models/db';
 import type { AuthRequest } from '../middleware/auth.middleware';
-import { writeAuditLog } from '../models/audit-log.model';
+import { insertAuditLog } from '../models/audit-log.model';
 
 const operationalStatuses = new Set(['Activo', 'Inactivo']);
 const driverFields = new Set(['nombre', 'email', 'telefono', 'estatus_operativo', 'vehicle_id']);
@@ -144,8 +144,14 @@ export const createDriver = async (req: AuthRequest, res: Response): Promise<voi
             [driverId]
         );
 
+        await insertAuditLog(client, req, {
+            adminId,
+            action: 'DRIVER_CREATED',
+            resourceType: 'driver',
+            resourceId: driverId,
+            details: { fields: Object.keys(parsed.input) },
+        });
         await client.query('COMMIT');
-        void writeAuditLog(req, { adminId, action: 'DRIVER_CREATED', resourceType: 'driver', resourceId: driverId, details: { fields: Object.keys(parsed.input) } });
         res.status(201).json(newDriver.rows[0]);
     } catch (error) {
         await client.query('ROLLBACK');
@@ -170,7 +176,6 @@ export const getDrivers = async (req: AuthRequest, res: Response): Promise<void>
             ORDER BY d.id;
         `;
         const result = await pool.query(query, [adminId]);
-        void writeAuditLog(req, { adminId, action: 'DRIVERS_VIEWED', resourceType: 'driver', details: { count: result.rows.length } });
         res.json(result.rows);
     } catch (error) {
         console.error('Error al obtener conductores:', error);
@@ -211,8 +216,10 @@ export const updateDriver = async (req: AuthRequest, res: Response): Promise<voi
         return;
     }
 
+    const client = await pool.connect();
     try {
-        const updated = await pool.query(
+        await client.query('BEGIN');
+        const updated = await client.query(
             `WITH changed AS (
                 UPDATE drivers SET ${assignments.join(', ')}
                 WHERE id = $${values.length} AND admin_id = $${values.length + 1}
@@ -225,14 +232,25 @@ export const updateDriver = async (req: AuthRequest, res: Response): Promise<voi
         );
 
         if (updated.rows.length === 0) {
+            await client.query('ROLLBACK');
             res.status(404).json({ error: 'Conductor no encontrado' });
             return;
         }
 
-        void writeAuditLog(req, { adminId, action: 'DRIVER_UPDATED', resourceType: 'driver', resourceId: id, details: { fields: Object.keys(parsed.input) } });
+        await insertAuditLog(client, req, {
+            adminId,
+            action: 'DRIVER_UPDATED',
+            resourceType: 'driver',
+            resourceId: id,
+            details: { fields: Object.keys(parsed.input) },
+        });
+        await client.query('COMMIT');
         res.json(updated.rows[0]);
     } catch (error) {
+        await client.query('ROLLBACK');
         sendDatabaseError(error, res, 'actualizar');
+    } finally {
+        client.release();
     }
 };
 
@@ -249,17 +267,29 @@ export const deleteDriver = async (req: AuthRequest, res: Response): Promise<voi
         return;
     }
 
+    const client = await pool.connect();
     try {
-        const result = await pool.query('DELETE FROM drivers WHERE id = $1 AND admin_id = $2 RETURNING *;', [id, adminId]);
+        await client.query('BEGIN');
+        const result = await client.query('DELETE FROM drivers WHERE id = $1 AND admin_id = $2 RETURNING *;', [id, adminId]);
 
         if (result.rows.length === 0) {
+            await client.query('ROLLBACK');
             res.status(404).json({ error: 'Conductor no encontrado' });
             return;
         }
 
-        void writeAuditLog(req, { adminId, action: 'DRIVER_DELETED', resourceType: 'driver', resourceId: id });
+        await insertAuditLog(client, req, {
+            adminId,
+            action: 'DRIVER_DELETED',
+            resourceType: 'driver',
+            resourceId: id,
+        });
+        await client.query('COMMIT');
         res.json({ message: 'Conductor eliminado correctamente' });
     } catch (error) {
+        await client.query('ROLLBACK');
         sendDatabaseError(error, res, 'eliminar');
+    } finally {
+        client.release();
     }
 };

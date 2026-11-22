@@ -16,7 +16,17 @@ import {
     verifyRegistrationTotp,
     verifyTotpMfa,
 } from './controllers/auth.controller';
-import { getAdminProfile, updateAdminProfile } from './controllers/admin.controller';
+import {
+    getAdminProfile,
+    updateAdminProfile,
+    getPrivacyAccess,
+    rectifyPrivacyData,
+    getMyRectificationStatus,
+    reviewRectificationByEmail,
+    cancelPrivacyAccount,
+    getPrivacyAudit,
+} from './controllers/admin.controller';
+import { getAuditHistory } from './controllers/audit.controller';
 import { createDriver, getDrivers, updateDriver, deleteDriver } from './controllers/driver.controller';
 import { getEventsDashboard, getGpsTracking, ingestDeviceEvent } from './controllers/dashboard.controller';
 import { requireDeviceKey } from './middleware/device-auth.middleware';
@@ -85,6 +95,13 @@ app.get('/api/admin', requireAuth, getAdminProfile);
 app.put('/api/admin', requireAuth, updateAdminProfile);
 app.get('/api/admin/me', requireAuth, getAdminProfile);
 app.put('/api/admin/me', requireAuth, updateAdminProfile);
+app.get('/api/admin/audit-logs', requireAuth, getAuditHistory);
+app.get('/api/privacy/access', requireAuth, getPrivacyAccess);
+app.patch('/api/privacy/rectification', requireAuth, rectifyPrivacyData);
+app.get('/api/privacy/rectification/status', requireAuth, getMyRectificationStatus);
+app.post('/api/privacy/rectification/review-by-email', reviewRectificationByEmail);
+app.post('/api/privacy/cancellation', requireAuth, cancelPrivacyAccount);
+app.get('/api/privacy/audit', requireAuth, getPrivacyAudit);
 app.get('/api/admin/:id', requireAuth, getAdminProfile);
 app.put('/api/admin/:id', requireAuth, updateAdminProfile);
 

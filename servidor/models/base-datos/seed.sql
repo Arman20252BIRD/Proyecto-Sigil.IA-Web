@@ -1,3 +1,18 @@
+\set ON_ERROR_STOP on
+\if :{?allow_demo_seed}
+\else
+\set allow_demo_seed off
+\endif
+\if :allow_demo_seed
+\else
+\echo 'Demo seed blocked. Pass -v allow_demo_seed=on only for local development.'
+DO $seed_guard$
+BEGIN
+    RAISE EXCEPTION 'Demo seed requires allow_demo_seed=on and is only for local development.';
+END
+$seed_guard$;
+\endif
+
 INSERT INTO admins (
     id, nombre, email, password, telefono_corporativo, empresa,
     face_template_encrypted, totp_secret_encrypted,

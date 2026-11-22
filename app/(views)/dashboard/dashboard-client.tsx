@@ -3,9 +3,8 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from "react";
 import { fetchWithAuth } from "../../../servidor/controllers/frontend/dashboard.controller";
-import { captureFacePhoto } from "../../../servidor/models/frontend/face-recognition";
 import styles from "./page.module.css";
 import mapStyles from "./driver-map.module.css";
 import { Preferences } from "../legal/components/preferencias";
@@ -70,6 +69,13 @@ type AdminProfile = {
 type AdminProfileInput = Pick<AdminProfile, "nombre" | "email" | "telefono_corporativo" | "empresa"> & { newPassword?: string; confirmPassword?: string; profilePhoto?: string | null };
 type Modal = "driver" | "delete" | null;
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+const subscribeToLocalDay = () => () => {};
+const getLocalDaySnapshot = (): number | null => {
+  const current = new Date();
+  current.setHours(0, 0, 0, 0);
+  return current.getTime();
+};
+const getServerLocalDaySnapshot = (): number | null => null;
 
 function isDriverRecord(value: unknown): value is DriverRecord {
   if (typeof value !== "object" || value === null) return false;
@@ -485,7 +491,8 @@ export default function DashboardClient() {
         <nav className={styles.sidebarNav} aria-label="Módulos principales">
           <SideButton active={section === "overview"} onClick={() => go("overview")} icon="▦">Resumen</SideButton>
           <SideButton active={section === "fleet"} onClick={() => go("fleet")} icon="⌁" badge={String(vehicles.length)}>Conductores ESP32</SideButton>
-          <SideButton active={section === "admin"} onClick={() => go("admin")} icon="◎">Configuración admin</SideButton>
+          <SideButton active={section === "admin"} onClick={() => go("admin")} icon="◎">Mi perfil</SideButton>
+          <SideButton active={section === "privacy"} onClick={() => go("privacy")} icon="◇">Mi privacidad</SideButton>
           <SideButton active={section === "support"} onClick={() => go("support")} icon="?">Soporte técnico</SideButton>
         </nav>
         <div className={styles.sidebarBottom}>
@@ -495,14 +502,15 @@ export default function DashboardClient() {
 
       <section className={styles.content}>
         <header className={styles.topbar}>
-          <div><span className={styles.breadcrumb}>PANEL DE ADMINISTRACIÓN / {section === "fleet" ? "CONDUCTORES" : section === "admin" ? "CONFIGURACIÓN" : section === "support" ? "SOPORTE" : "RESUMEN"}</span><h1>{section === "fleet" ? "Gestión de conductores" : section === "admin" ? "Configuración de cuenta" : section === "support" ? "Soporte técnico" : "Supervisión telemática activa"}</h1></div>
+          <div><span className={styles.breadcrumb}>PANEL DE ADMINISTRACIÓN / {section === "fleet" ? "CONDUCTORES" : section === "admin" ? "CUENTA" : section === "privacy" ? "PRIVACIDAD" : section === "support" ? "SOPORTE" : "RESUMEN"}</span><h1>{section === "fleet" ? "Gestión de conductores" : section === "admin" ? "Mi perfil" : section === "privacy" ? "Mi privacidad" : section === "support" ? "Soporte técnico" : "Supervisión telemática activa"}</h1></div>
           <div className={styles.topActions}><Preferences inHeader /><div className={`${styles.userBadge} userBadge`}>{adminProfile?.profile_photo ? <img src={adminProfile.profile_photo} alt="Foto del administrador" /> : <span>{adminProfile?.nombre.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase() ?? "—"}</span>}<div><strong>{adminProfile?.nombre ?? (isLoadingAdminProfile ? "Cargando cuenta…" : "Administrador")}</strong><small>{adminProfile?.empresa ?? "Administración"}</small></div></div></div>
         </header>
 
         <div className={styles.dashboard} id="overview">
           {section === "overview" && <SummaryPanel activeCount={activeCount} vehicleCount={vehicles.length} events={events} gpsCount={gpsRecords.length} onFleet={() => go("fleet")} />}
           {section === "fleet" && <><FleetPanel vehicles={filtered} search={search} selectedId={selected?.id ?? ""} isLoading={isLoadingDrivers} onSearch={setSearch} onAdd={() => { setEditing(null); setModal("driver"); }} onSelect={selectDriver} onEdit={(vehicle) => { setEditing(vehicle); setModal("driver"); }} onDelete={(vehicle) => { setSelected(vehicle); setModal("delete"); }} />{selectedWithGps && <DriverWorkspace vehicle={selectedWithGps} gps={selectedGps} events={selectedEvents} hasActiveEvent={hasActiveEvent} tab={driverTab} setTab={setDriverTab} onToast={showToast} />}</>}
-          {section === "admin" && <AdminSettings profile={adminProfile} draft={adminDraft} onDraftChange={setAdminDraft} isLoading={isLoadingAdminProfile} isSaving={isSavingAdminProfile} onSave={saveAdminProfile} onRetry={loadAdminProfile} />}
+          {section === "admin" && <AdminSettings profile={adminProfile} isLoading={isLoadingAdminProfile} onRetry={loadAdminProfile} onPrivacy={() => go("privacy")} />}
+          {section === "privacy" && <PrivacyPanel onToast={showToast} />}
           {section === "support" && <SupportPanel onToast={showToast} />}
         </div>
       </section>
@@ -521,13 +529,13 @@ function SideButton({ active, onClick, icon, badge, children }: { active: boolea
 function Metric({ label, value, detail, tone }: { label: string; value: string; detail: string; tone: string }) { return <article className={`${styles.metric} ${styles[`metric${tone}`]}`}><span>{label}</span><strong>{value}</strong><small>{detail}</small></article>; }
 
 function SummaryPanel({ activeCount, vehicleCount, events, gpsCount, onFleet }: { activeCount: number; vehicleCount: number; events: EventRecord[]; gpsCount: number; onFleet: () => void }) {
-  const [today] = useState(() => {
-    const current = new Date();
-    current.setHours(0, 0, 0, 0);
-    return current;
-  });
+  const todayTimestamp = useSyncExternalStore(subscribeToLocalDay, getLocalDaySnapshot, getServerLocalDaySnapshot);
+  const today = todayTimestamp === null ? null : new Date(todayTimestamp);
   const weekDays = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
   const dayBuckets = Array.from({ length: 7 }, (_, index) => {
+    if (!today) {
+      return { key: weekDays[index], label: weekDays[index], count: 0, isToday: false };
+    }
     const date = new Date(today);
     const daysFromMonday = today.getDay() === 0 ? 6 : today.getDay() - 1;
     date.setDate(today.getDate() - daysFromMonday + index);
@@ -582,14 +590,20 @@ function LegacySummaryPanel({ activeCount, vehicleCount, events, gpsCount, onFle
   </>;
 }
 
-function SupportPanel({ onToast: _onToast }: { onToast: (message: string) => void }) {
+function SupportPanel({ onToast }: { onToast: (message: string) => void }) {
   const [supportOpen, setSupportOpen] = useState(false);
   const supportEmail = process.env.NEXT_PUBLIC_SUPPORT_EMAIL ?? "sigil.ia.soporte@gmail.com";
   return <>
-    <section className={styles.supportPanel}><div className={styles.panelHeader}><div><span className={styles.sectionLabel}>01 / CENTRO DE AYUDA</span><h2>Soporte técnico de Sigil.IA</h2><p>Obtén ayuda para la plataforma, los dispositivos ESP32 y la operación de tu flota.</p></div><span className={styles.supportStatus}>● Soporte disponible</span></div><div className={styles.supportGrid}>
-      <article className={styles.supportCard}><span>?</span><h3>Guía de operación</h3><p>Consulta cómo administrar conductores, alertas, GPS y registros históricos.</p><a className="supportAction" href="/manual-sigilia.pdf" download="manual-sigilia.pdf">Descargar manual PDF →</a></article>
-      <article className={styles.supportCard}><span>☎</span><h3>Contacto de soporte</h3><p>Canal para solicitar asistencia con la instalación o los sensores.</p><button onClick={() => setSupportOpen(true)}>Contactar soporte →</button></article>
-    </div></section>
+    <section className={styles.supportPanel}>
+      <div className={styles.panelHeader}>
+        <div><span className={styles.sectionLabel}>01 / CENTRO DE AYUDA</span><h2>Soporte técnico de Sigil.IA</h2><p>Obtén ayuda para la plataforma, los dispositivos ESP32 y la operación de tu flota.</p></div>
+        <span className={styles.supportStatus}>● Soporte disponible</span>
+      </div>
+      <div className={styles.supportGrid}>
+        <article className={styles.supportCard}><span>?</span><h3>Guía de operación</h3><p>Consulta cómo administrar conductores, alertas, GPS y registros históricos.</p><a className="supportAction" href="/manual-sigilia.pdf" download="manual-sigilia.pdf">Descargar manual PDF →</a></article>
+        <article className={styles.supportCard}><span>☎</span><h3>Contacto de soporte</h3><p>Canal para solicitar asistencia con la instalación o los sensores.</p><button onClick={() => setSupportOpen(true)}>Contactar soporte →</button></article>
+      </div>
+    </section>
     {supportOpen && <Modal title="Contactar soporte" onClose={() => setSupportOpen(false)}><div className={styles.callDialog}><span className={styles.contactAvatar}>?</span><h3>Soporte técnico de Sigil.IA</h3><p>{supportEmail}</p><small>Se abrirá tu aplicación de correo para solicitar asistencia.</small><a className={styles.primaryButton} href={`mailto:${supportEmail}?subject=Solicitud%20de%20soporte`}>Enviar correo</a></div></Modal>}
   </>;
 }
@@ -654,124 +668,271 @@ function DriverGpsMap({ vehicle, gps, hasActiveEvent }: { vehicle: Vehicle; gps:
 
 function DetailCard({ title, value, detail }: { title: string; value: string; detail: string }) { return <article className={styles.detailCard}><span>{title}</span><strong>{value}</strong><small>{detail}</small></article>; }
 function EventTable({ events }: { events: EventRecord[] }) { return <div className={styles.eventList}>{events.length ? events.map((event) => <div className={styles.eventRow} key={String(event.id)}><i className={styles.resolvedDot} /><div><strong>Evento #{event.id}</strong><span>{new Date(event.created_at).toLocaleString("es-MX")} · {event.numero_flota ?? `Conductor ${event.driver_id}`}</span></div><code>{event.conductor_nombre}</code></div>) : <p>No hay eventos registrados para este conductor.</p>}</div>; }
-function AdminSettings({
-  profile,
-  draft,
-  onDraftChange,
-  isLoading,
-  isSaving,
-  onSave,
-  onRetry,
-}: {
-  profile: AdminProfile | null;
-  draft: AdminProfileInput;
-  onDraftChange: (draft: AdminProfileInput) => void;
-  isLoading: boolean;
-  isSaving: boolean;
-  onSave: (input: AdminProfileInput) => Promise<boolean>;
-  onRetry: () => Promise<void>;
-}) {
-  const photoVideoRef = useRef<HTMLVideoElement>(null);
-  const photoStreamRef = useRef<MediaStream | null>(null);
-  const [photoCameraOpen, setPhotoCameraOpen] = useState(false);
-  const [photoStatus, setPhotoStatus] = useState("");
-  const [passwordError, setPasswordError] = useState("");
 
-  useEffect(() => () => {
-    photoStreamRef.current?.getTracks().forEach((track) => track.stop());
-  }, []);
+type PrivacyAccess = {
+  identificacion: { nombre_completo: string };
+  contacto: { correo_electronico: string; telefono: string | null };
+  cuenta: { id: string; fecha_registro: string; estado: string; ultima_actualizacion: string; empresa: string | null };
+  vehiculo: { asociado: string | null };
+  seguridad: { autenticacion_facial_habilitada: boolean; autenticador_totp_habilitado: boolean };
+};
+type PrivacyAuditEntry = {
+  id: string;
+  action: string;
+  result: string;
+  purpose: string | null;
+  notice_version: string | null;
+  created_at: string;
+};
+type RectificationStatus = {
+  id: string;
+  status: "pending" | "approved" | "rejected";
+  review_note: string | null;
+  created_at: string;
+  reviewed_at: string | null;
+};
 
-  const startPhotoCamera = async () => {
+function isPrivacyAccess(value: unknown): value is PrivacyAccess {
+  if (typeof value !== "object" || value === null) return false;
+  const record = value as Record<string, unknown>;
+  return typeof record.identificacion === "object" && record.identificacion !== null
+    && typeof record.contacto === "object" && record.contacto !== null
+    && typeof record.cuenta === "object" && record.cuenta !== null
+    && typeof record.vehiculo === "object" && record.vehiculo !== null
+    && typeof record.seguridad === "object" && record.seguridad !== null;
+}
+
+function isPrivacyAudit(value: unknown): value is { items: PrivacyAuditEntry[] } {
+  if (typeof value !== "object" || value === null) return false;
+  const record = value as Record<string, unknown>;
+  return Array.isArray(record.items);
+}
+
+function PrivacyPanel({ onToast }: { onToast: (message: string) => void }) {
+  const [access, setAccess] = useState<PrivacyAccess | null>(null);
+  const [audit, setAudit] = useState<PrivacyAuditEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [confirmation, setConfirmation] = useState("");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [rectificationStatus, setRectificationStatus] = useState<RectificationStatus | null>(null);
+
+  const loadPrivacy = useCallback(async () => {
+    setLoading(true);
     try {
-      photoStreamRef.current?.getTracks().forEach((track) => track.stop());
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
-      photoStreamRef.current = stream;
-      setPhotoCameraOpen(true);
-      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
-      if (!photoVideoRef.current) {
-        stream.getTracks().forEach((track) => track.stop());
-        photoStreamRef.current = null;
-        setPhotoCameraOpen(false);
-        return;
-      }
-      photoVideoRef.current.srcObject = stream;
-      await photoVideoRef.current.play();
-      setPhotoStatus("Mira al frente y mantén el rostro centrado.");
-    } catch {
-      setPhotoStatus("No se pudo abrir la cámara.");
-    }
-  };
-
-  const capturePhotoWithFace = async () => {
-    if (!photoVideoRef.current) return;
-    setPhotoStatus("Validando rostro…");
-    try {
-      const photo = await captureFacePhoto(photoVideoRef.current, setPhotoStatus);
-      updateField("profilePhoto", photo);
-      const saved = await onSave({ ...draft, profilePhoto: photo });
-      setPhotoStatus(saved ? "Foto facial guardada en el perfil." : "No se pudo guardar la foto en el perfil.");
+      const [accessResponse, auditResponse, statusResponse] = await Promise.all([
+        fetchWithAuth(`${API_URL}/api/privacy/access`),
+        fetchWithAuth(`${API_URL}/api/privacy/audit`),
+        fetchWithAuth(`${API_URL}/api/privacy/rectification/status`),
+      ]);
+      const [accessResult, auditResult, statusResult] = await Promise.all([
+        accessResponse.json(),
+        auditResponse.json(),
+        statusResponse.json(),
+      ]);
+      if (!accessResponse.ok) throw new Error(isApiError(accessResult) ? accessResult.error : "No fue posible consultar tus datos.");
+      if (!auditResponse.ok) throw new Error(isApiError(auditResult) ? auditResult.error : "No fue posible consultar la bitácora.");
+      if (!statusResponse.ok) throw new Error(isApiError(statusResult) ? statusResult.error : "No fue posible consultar el estado de la rectificación.");
+      if (!isPrivacyAccess(accessResult) || !isPrivacyAudit(auditResult)) throw new Error("La API devolvió un formato no válido.");
+      setAccess(accessResult);
+      setAudit(auditResult.items);
+      setRectificationStatus(typeof statusResult === "object" && statusResult !== null && "request" in statusResult
+        ? (statusResult.request as RectificationStatus | null)
+        : null);
+      setName(accessResult.identificacion.nombre_completo);
+      setEmail(accessResult.contacto.correo_electronico);
+      setPhone(accessResult.contacto.telefono ?? "");
     } catch (error) {
-      setPhotoStatus(error instanceof Error ? error.message : "No se pudo validar el rostro.");
+      onToast(error instanceof Error ? error.message : "No se pudo cargar Mi privacidad.");
     } finally {
-      photoStreamRef.current?.getTracks().forEach((track) => track.stop());
-      photoStreamRef.current = null;
-      setPhotoCameraOpen(false);
+      setLoading(false);
+    }
+  }, [onToast]);
+
+  useEffect(() => { void loadPrivacy(); }, [loadPrivacy]);
+
+  const rectify = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSaving(true);
+    try {
+      const response = await fetchWithAuth(`${API_URL}/api/privacy/rectification`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nombre: name.trim(), email: email.trim(), telefono: phone.trim() }),
+      });
+      const result: unknown = await response.json();
+      if (!response.ok) throw new Error(isApiError(result) ? result.error : "No fue posible rectificar los datos.");
+      const rectificationResult = typeof result === "object" && result !== null
+        ? result as Record<string, unknown>
+        : {};
+      setRectificationStatus({
+        id: typeof rectificationResult.requestId === "string" ? rectificationResult.requestId : "",
+        status: "pending",
+        review_note: null,
+        created_at: new Date().toISOString(),
+        reviewed_at: null,
+      });
+      onToast(typeof rectificationResult.message === "string" ? rectificationResult.message : "Solicitud enviada a soporte.");
+      await loadPrivacy();
+    } catch (error) {
+      onToast(error instanceof Error ? error.message : "No se pudo rectificar los datos.");
+    } finally {
+      setSaving(false);
     }
   };
 
-  const updateField = (field: keyof AdminProfileInput, value: string) => {
-    onDraftChange({ ...draft, [field]: value });
-  };
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (draft.newPassword && draft.newPassword !== draft.confirmPassword) {
-      setPasswordError("Las contraseñas no coinciden.");
+  const cancelAccount = async () => {
+    if (confirmation.trim().toUpperCase() !== "CONFIRMAR") {
+      onToast("Escribe CONFIRMAR para continuar.");
       return;
     }
-    setPasswordError("");
-    await onSave({
-      ...draft,
-      nombre: draft.nombre.trim(),
-      email: draft.email.trim(),
-      telefono_corporativo: draft.telefono_corporativo?.trim() || null,
-      empresa: draft.empresa?.trim() || null,
-    });
+    setSaving(true);
+    try {
+      const response = await fetchWithAuth(`${API_URL}/api/privacy/cancellation`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmation }),
+      });
+      const result: unknown = await response.json();
+      if (!response.ok) throw new Error(isApiError(result) ? result.error : "No fue posible cancelar la cuenta.");
+      window.sessionStorage.removeItem("sigil_access_token");
+      window.location.assign("/login");
+    } catch (error) {
+      onToast(error instanceof Error ? error.message : "No se pudo cancelar la cuenta.");
+    } finally {
+      setSaving(false);
+    }
   };
+
+  return (
+    <section className={styles.privacyPanel} id="privacy">
+      <div className={styles.panelHeader}>
+        <div><span className={styles.sectionLabel}>01 / DERECHOS ARCO</span><h2>Mi privacidad</h2><p>Gestiona tus datos personales y consulta las acciones relacionadas con tu privacidad.</p></div>
+        <button className={styles.linkButton} type="button" onClick={() => void loadPrivacy()} disabled={loading}>{loading ? "Actualizando…" : "Actualizar"}</button>
+      </div>
+      {loading && <p role="status">Cargando tus datos personales…</p>}
+      {access && (
+        <>
+          <div className={styles.privacyGrid}>
+            <article className={styles.privacyCard}>
+              <h3>Acceso a mis datos</h3>
+              <dl>
+                <dt>Nombre completo</dt><dd>{access.identificacion.nombre_completo}</dd>
+                <dt>Correo electrónico</dt><dd>{access.contacto.correo_electronico}</dd>
+                <dt>Teléfono</dt><dd>{access.contacto.telefono ?? "No registrado"}</dd>
+                <dt>Estado de cuenta</dt><dd>{access.cuenta.estado === "active" ? "Activa" : access.cuenta.estado}</dd>
+                <dt>Fecha de registro</dt><dd>{access.cuenta.fecha_registro ? new Date(access.cuenta.fecha_registro).toLocaleString("es-MX") : "No disponible"}</dd>
+                <dt>Autenticación facial</dt><dd>{access.seguridad.autenticacion_facial_habilitada ? "Habilitada" : "No habilitada"}</dd>
+                <dt>Autenticador TOTP</dt><dd>{access.seguridad.autenticador_totp_habilitado ? "Habilitado" : "No habilitado"}</dd>
+              </dl>
+            </article>
+            <form className={styles.privacyCard} onSubmit={rectify}>
+              <h3>Rectificar mis datos</h3>
+              <label>Nombre completo<input value={name} onChange={(event) => setName(event.target.value)} minLength={2} maxLength={120} required disabled={saving} /></label>
+              <label>Correo electrónico<input value={email} onChange={(event) => setEmail(event.target.value)} type="email" maxLength={254} required disabled={saving} /></label>
+              <label>Teléfono<input value={phone} onChange={(event) => setPhone(event.target.value)} type="tel" maxLength={30} disabled={saving} /></label>
+              <button className={styles.primaryButton} type="submit" disabled={saving}>{saving ? "Guardando…" : "Guardar cambios"}</button>
+              {rectificationStatus?.status === "pending" && <p className={styles.rectificationNotice} role="status">Los cambios se le han notificado a soporte, en espera de verificación.</p>}
+              {rectificationStatus?.status === "approved" && <p className={styles.rectificationApproved} role="status">Soporte autorizó los cambios. Tus datos personales fueron actualizados.</p>}
+              {rectificationStatus?.status === "rejected" && <p className={styles.rectificationRejected} role="status">Soporte rechazó la solicitud.{rectificationStatus.review_note ? ` ${rectificationStatus.review_note}` : ""}</p>}
+            </form>
+          </div>
+          <article className={`${styles.privacyCard} ${styles.cancellationCard}`}>
+            <div><h3>Cancelar mi cuenta</h3><p>Esta acción dará de baja tu cuenta en el entorno de prueba. Después de confirmar, ya no podrás iniciar sesión.</p></div>
+            <label>Escribe CONFIRMAR<input value={confirmation} onChange={(event) => setConfirmation(event.target.value)} placeholder="CONFIRMAR" disabled={saving} /></label>
+            <button className={styles.dangerButton} type="button" onClick={() => void cancelAccount()} disabled={saving}>Confirmar cancelación</button>
+          </article>
+        </>
+      )}
+      <article className={`${styles.privacyCard} ${styles.privacyHistory}`}>
+        <h3>Historial de privacidad</h3>
+        {audit.length === 0 && <p>No hay acciones de privacidad registradas.</p>}
+        {audit.length > 0 && <div className={styles.privacyAuditTable}>
+          {audit.map((entry) => <div key={entry.id}><time>{new Date(entry.created_at).toLocaleString("es-MX")}</time><strong>{entry.action}</strong><span>{entry.result}</span></div>)}
+        </div>}
+      </article>
+    </section>
+  );
+}
+
+function AdminSettings({
+  profile,
+  isLoading,
+  onRetry,
+  onPrivacy,
+}: {
+  profile: AdminProfile | null;
+  isLoading: boolean;
+  onRetry: () => Promise<void>;
+  onPrivacy: () => void;
+}) {
   return (
     <section className={styles.adminSettings} id="admin">
-      <div>
-        <span className={styles.sectionLabel}>01 / CUENTA DEL ADMINISTRADOR</span>
-        <h2>Datos de la cuenta</h2>
-        <p>Puedes actualizar tus datos aquí.</p>
+      <div className={styles.profileHeading}>
+        <div>
+          <span className={styles.sectionLabel}>01 / 04</span>
+          <h2>Mi perfil</h2>
+          <p>Administra tu información personal, seguridad y preferencias de privacidad.</p>
+        </div>
       </div>
       {isLoading && <p role="status">Cargando los datos de la cuenta…</p>}
       {!isLoading && !profile && <div role="alert"><p>No fue posible obtener los datos de esta cuenta. Usa «Actualizar» para volver a intentarlo.</p><button className={styles.primaryButton} type="button" onClick={() => void onRetry()}>Actualizar</button></div>}
       {profile && (
-        <form onSubmit={handleSubmit}>
-          <div className={styles.settingsGrid}>
-            <label>Nombre completo<input value={draft.nombre} onChange={(event) => updateField("nombre", event.target.value)} maxLength={120} required disabled={isSaving} /></label>
-            <label>Correo corporativo<input value={draft.email} type="email" maxLength={254} required readOnly aria-readonly="true" tabIndex={-1} disabled /></label>
-            <label>Teléfono<input value={draft.telefono_corporativo ?? ""} onChange={(event) => updateField("telefono_corporativo", event.target.value)} type="tel" maxLength={30} disabled={isSaving} /></label>
-            <label>Empresa<input value={draft.empresa ?? ""} onChange={(event) => updateField("empresa", event.target.value)} maxLength={120} disabled={isSaving} /></label>
-          </div>
-          <div className={`${styles.settingsSecurity} profileSettingsCard`}>
-            <strong>Foto y contraseña</strong>
-            <div className="profilePhotoEditor">
-              {profile.profile_photo ? <img src={profile.profile_photo} alt="Foto del administrador" /> : <span>{profile.nombre.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase()}</span>}
-              <button type="button" className={styles.primaryButton} disabled={isSaving} onClick={photoCameraOpen ? capturePhotoWithFace : startPhotoCamera}>
-                {photoCameraOpen ? "Capturar con reconocimiento" : "Tomar foto con reconocimiento"}
-              </button>
+        <>
+          <div className={styles.profileIdentity}>
+            <div className={styles.profileAvatar}>
+              {profile.profile_photo
+                ? <img src={profile.profile_photo} alt={`Foto de ${profile.nombre}`} />
+                : <span>{profile.nombre.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "AS"}</span>}
             </div>
-            <div className="profileCamera">
-              {photoCameraOpen && <video ref={photoVideoRef} autoPlay muted playsInline />}
-              {photoStatus && <small>{photoStatus}</small>}
+            <div>
+              <strong>{profile.nombre || "Administrador SIGIL"}</strong>
+              <span>{profile.email}</span>
+              <small>Administrador</small>
             </div>
-            <label>Nueva contraseña<input type="password" minLength={12} placeholder="Mínimo 12 caracteres" disabled={isSaving} onChange={(event) => updateField("newPassword" as keyof AdminProfileInput, event.target.value)} /></label>
-            <label>Validar contraseña<input type="password" minLength={12} placeholder="Mínimo 12 caracteres" disabled={isSaving} onChange={(event) => updateField("confirmPassword" as keyof AdminProfileInput, event.target.value)} /></label>
-            {passwordError && <small role="alert">{passwordError}</small>}
           </div>
-          <button className={styles.primaryButton} type="submit" disabled={isSaving}>{isSaving ? "Guardando…" : "Guardar configuración"}</button>
-        </form>
+
+          <article className={styles.profileSection}>
+            <h3><span>01.</span> Información personal</h3>
+            <dl className={styles.profileDataGrid}>
+              <div><dt>Nombre completo</dt><dd>{profile.nombre}</dd></div>
+              <div><dt>Correo corporativo</dt><dd>{profile.email}</dd></div>
+              <div><dt>Teléfono</dt><dd>{profile.telefono_corporativo || "No registrado"}</dd></div>
+              <div><dt>Empresa / Organización</dt><dd>{profile.empresa || "No registrada"}</dd></div>
+            </dl>
+          </article>
+
+          <article className={styles.profileSection}>
+            <h3><span>02.</span> Seguridad de la cuenta</h3>
+            <div className={styles.securityGrid}>
+              <div className={styles.securityStatus}>
+                <div><strong>Autenticación multifactor</strong><small>{profile.totp_enabled ? "TOTP activo" : "No configurado"}</small></div>
+                <b className={profile.totp_enabled ? styles.statusEnabled : styles.statusDisabled}>{profile.totp_enabled ? "Activo" : "Pendiente"}</b>
+              </div>
+              <div className={styles.securityStatus}>
+                <div><strong>Reconocimiento biométrico</strong><small>{profile.mfa_facial_status ? "Plantilla registrada" : "No configurado"}</small></div>
+                <b className={profile.mfa_facial_status ? styles.statusEnabled : styles.statusDisabled}>{profile.mfa_facial_status ? "Activo" : "Pendiente"}</b>
+              </div>
+              <div className={styles.passwordStatus}><strong>Nueva contraseña</strong><span>Protegida</span></div>
+              <div className={styles.passwordStatus}><strong>Confirmar contraseña</strong><span>Protegida</span></div>
+            </div>
+          </article>
+
+          <article className={styles.profileSection}>
+            <div className={styles.privacySectionHeading}>
+              <h3><span>03.</span> Mi privacidad</h3>
+              <p>Consulta y administra tus datos personales.</p>
+            </div>
+            <div className={styles.privacyActionGrid}>
+              <button type="button" onClick={onPrivacy}><span>ACCESO</span><strong>Acceso a mis datos</strong><small>Consulta la información registrada.</small><b>→</b></button>
+              <button type="button" onClick={onPrivacy}><span>RECTIFICACIÓN</span><strong>Rectificación de datos</strong><small>Corrige tu información personal.</small><b>→</b></button>
+              <button type="button" onClick={onPrivacy}><span>CANCELACIÓN</span><strong>Cancelación de cuenta</strong><small>Solicita la baja de tu cuenta.</small><b>→</b></button>
+              <button type="button" onClick={onPrivacy}><span>HISTORIAL</span><strong>Historial de privacidad</strong><small>Consulta tus acciones y decisiones.</small><b>→</b></button>
+            </div>
+          </article>
+        </>
       )}
     </section>
   );

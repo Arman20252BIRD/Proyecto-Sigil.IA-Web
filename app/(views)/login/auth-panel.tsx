@@ -66,6 +66,7 @@ export default function AuthPanel({ initialResetToken = "" }: { initialResetToke
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const faceTrackingAbortRef = useRef<AbortController | null>(null);
+  const cameraStartingRef = useRef(false);
   const passwordRequirements = getPasswordRequirements(registrationPassword);
   const passwordsMatch = registrationPassword.length > 0
     && registrationPassword === registrationPasswordConfirm;
@@ -107,10 +108,13 @@ export default function AuthPanel({ initialResetToken = "" }: { initialResetToke
   }
 
   async function startCamera() {
+    if (cameraStartingRef.current) return;
+    cameraStartingRef.current = true;
     setNotice("");
     setCapturedFaceDescriptor(null);
     setDetectedFaceBox(null);
     if (!navigator.mediaDevices?.getUserMedia) {
+      cameraStartingRef.current = false;
       setNotice("Este navegador no permite usar la cámara. Usa el código autenticador o prueba con HTTPS/localhost.");
       return;
     }
@@ -127,11 +131,42 @@ export default function AuthPanel({ initialResetToken = "" }: { initialResetToke
         streamRef.current = null;
         throw new Error("No se encontró el reproductor de cámara.");
       }
-      videoRef.current.srcObject = stream;
-      await videoRef.current.play();
+      const video = videoRef.current;
+      video.srcObject = stream;
+      if (video.readyState < HTMLMediaElement.HAVE_METADATA) {
+        await new Promise<void>((resolve, reject) => {
+          const timeout = window.setTimeout(() => {
+            cleanup();
+            reject(new Error("La cámara no respondió a tiempo. Intenta activarla de nuevo."));
+          }, 10_000);
+          const cleanup = () => {
+            window.clearTimeout(timeout);
+            video.removeEventListener("loadedmetadata", handleLoaded);
+            video.removeEventListener("error", handleError);
+          };
+          const handleLoaded = () => {
+            cleanup();
+            resolve();
+          };
+          const handleError = () => {
+            cleanup();
+            reject(new Error("No fue posible iniciar el reproductor de cámara."));
+          };
+          video.addEventListener("loadedmetadata", handleLoaded, { once: true });
+          video.addEventListener("error", handleError, { once: true });
+        });
+      }
+      try {
+        await video.play();
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === "AbortError"
+          && streamRef.current === stream && video.readyState >= HTMLMediaElement.HAVE_METADATA)) {
+          throw error;
+        }
+      }
       const trackingController = new AbortController();
       faceTrackingAbortRef.current = trackingController;
-      void trackLiveFaceBox(videoRef.current, setDetectedFaceBox, trackingController.signal).catch(() => {
+      void trackLiveFaceBox(video, setDetectedFaceBox, trackingController.signal).catch(() => {
         if (!trackingController.signal.aborted) setDetectedFaceBox(null);
       });
       setFaceState("camera");
@@ -139,6 +174,8 @@ export default function AuthPanel({ initialResetToken = "" }: { initialResetToke
     } catch (error) {
       stopCamera();
       setNotice(error instanceof Error ? error.message : "No se pudo acceder a la cámara.");
+    } finally {
+      cameraStartingRef.current = false;
     }
   }
 
@@ -813,7 +850,7 @@ function CameraFrame({
     : undefined;
   return (
     <div ref={cameraRef} className={styles.camera}>
-      <video ref={videoRef} autoPlay muted playsInline className={cameraVisible ? styles.videoVisible : ""} />
+      <video ref={videoRef} muted playsInline className={cameraVisible ? styles.videoVisible : ""} />
       {(cameraVisible || !faceBox) && (
         faceBox
           ? <div className="faceDetected" style={faceGuideStyle} aria-label="Rostro detectado" />

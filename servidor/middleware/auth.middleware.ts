@@ -1,6 +1,7 @@
 import { NextFunction, Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import { jwtSecret } from '../controllers/auth.config';
+import { pool } from '../models/db';
 
 export interface AuthRequest extends Request {
   admin?: {
@@ -52,8 +53,22 @@ function authenticate(purpose: TokenPurpose, req: AuthRequest, res: Response): b
   }
 }
 
-export const requireAuth = (req: AuthRequest, res: Response, next: NextFunction): void => {
-  if (authenticate('access', req, res)) next();
+export const requireAuth = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  if (!authenticate('access', req, res)) return;
+  try {
+    const result = await pool.query<{ account_status: string }>(
+      'SELECT account_status FROM admins WHERE id = $1',
+      [req.admin?.id]
+    );
+    if (result.rows[0]?.account_status === 'cancelled') {
+      res.status(403).json({ error: 'Esta cuenta fue dada de baja.' });
+      return;
+    }
+  } catch {
+    res.status(503).json({ error: 'No fue posible validar el estado de la cuenta.' });
+    return;
+  }
+  next();
 };
 
 export const requireMfaSession = (req: AuthRequest, res: Response, next: NextFunction): void => {

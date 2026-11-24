@@ -18,7 +18,7 @@ const PRIVACY_NOTICE_VERSION = '1.0';
 
 type FaceDescriptor = number[];
 type AdminIdentity = { id: string; email: string; nombre: string };
-type TokenPurpose = 'access' | 'mfa' | 'enroll' | 'setup';
+type TokenPurpose = 'access' | 'mfa' | 'enroll' | 'setup' | 'onboarding';
 
 function isFaceDescriptor(value: unknown): value is FaceDescriptor {
     return Array.isArray(value)
@@ -89,7 +89,6 @@ async function consumeMfaSession(adminId: string, jti: string, totpTimeStep?: nu
 }
 
 function sendLockedResponse(res: Response, lockedUntil: Date | string | null): boolean {
-    return false;
     if (!lockedUntil || new Date(lockedUntil as string).getTime() <= Date.now()) return false;
     res.status(429).json({ error: 'Demasiados intentos de MFA. Inicia sesión de nuevo más tarde.' });
     return true;
@@ -99,14 +98,39 @@ function isDuplicateEmail(error: unknown): boolean {
     return typeof error === 'object' && error !== null && 'code' in error && error.code === '23505';
 }
 
-export const registerAdmin = async (req: Request, res: Response): Promise<void> => {
-    if (process.env.NODE_ENV === 'production') {
-        res.status(403).json({ error: 'El registro público está deshabilitado en producción.' });
+export const validateAdminInvitation = async (req: Request, res: Response): Promise<void> => {
+    const token = typeof req.body?.invitationToken === 'string' ? req.body.invitationToken.trim() : '';
+    if (!/^[A-Za-z0-9_-]{40,64}$/.test(token)) {
+        res.status(400).json({ error: 'Escribe un código de invitación válido.' });
         return;
     }
 
+    try {
+        const result = await pool.query(
+            `SELECT email, empresa, expires_at
+             FROM admin_invitations
+             WHERE token_hash = $1 AND used_at IS NULL AND expires_at > NOW()
+             LIMIT 1`,
+            [createHash('sha256').update(token).digest('hex')]
+        );
+        const invitation = result.rows[0];
+        if (!invitation) {
+            res.status(403).json({ error: 'La invitación no es válida, expiró o ya fue utilizada.' });
+            return;
+        }
+        res.json({ valid: true, email: invitation.email, empresa: invitation.empresa, expiresAt: invitation.expires_at });
+    } catch (error) {
+        console.error('Error al validar la invitación:', error);
+        res.status(503).json({ error: 'No fue posible validar la invitación.' });
+    }
+};
+
+export const registerAdmin = async (req: Request, res: Response): Promise<void> => {
+    res.status(410).json({ error: 'El registro público está deshabilitado. La cuenta debe ser creada previamente por soporte de SIGILIA.' });
+    return;
+
     const { nombre, email, password, telefono_corporativo, empresa, faceDescriptor, profilePhoto,
-        privacyNoticeAccepted, biometricConsent, marketingConsent } = req.body ?? {};
+        privacyNoticeAccepted, biometricConsent, marketingConsent, invitationToken } = req.body ?? {};
     const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
 
     if (typeof nombre !== 'string' || nombre.trim().length < 2 || nombre.trim().length > 120) {
@@ -122,6 +146,10 @@ export const registerAdmin = async (req: Request, res: Response): Promise<void> 
         res.status(400).json({
             error: 'La contraseña debe tener entre 12 y 128 caracteres e incluir mayúscula, minúscula y número.',
         });
+        return;
+    }
+    if (typeof invitationToken !== 'string' || !/^[A-Za-z0-9_-]{40,64}$/.test(invitationToken)) {
+        res.status(403).json({ error: 'El registro está cerrado. Necesitas una invitación válida emitida por SIGILIA.' });
         return;
     }
     if (!isFaceDescriptor(faceDescriptor)) {
@@ -146,6 +174,20 @@ export const registerAdmin = async (req: Request, res: Response): Promise<void> 
 
     try {
         await pool.query('DELETE FROM pending_admin_enrollments WHERE expires_at <= NOW()');
+        const invitationResult = await pool.query(
+            `SELECT id, email, empresa, role
+             FROM admin_invitations
+             WHERE token_hash = $1
+               AND used_at IS NULL
+               AND expires_at > NOW()
+             LIMIT 1`,
+            [createHash('sha256').update(invitationToken).digest('hex')]
+        );
+        const invitation = invitationResult.rows[0];
+        if (!invitation || invitation.email.trim().toLowerCase() !== normalizedEmail) {
+            res.status(403).json({ error: 'La invitación no es válida, expiró o no corresponde al correo corporativo autorizado.' });
+            return;
+        }
         const existing = await pool.query(
             `SELECT 1 FROM admins WHERE email = $1
              UNION ALL
@@ -165,8 +207,8 @@ export const registerAdmin = async (req: Request, res: Response): Promise<void> 
             `INSERT INTO pending_admin_enrollments
                 (id, nombre, email, password, telefono_corporativo, empresa, profile_photo,
                  privacy_notice_version, privacy_notice_accepted, biometric_consent, marketing_consent,
-                 face_template_encrypted, totp_secret_encrypted, expires_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW() + INTERVAL '15 minutes')
+                 face_template_encrypted, totp_secret_encrypted, invitation_id, account_role, expires_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW() + INTERVAL '15 minutes')
              RETURNING email`,
             [
                 enrollmentId,
@@ -174,7 +216,7 @@ export const registerAdmin = async (req: Request, res: Response): Promise<void> 
                 normalizedEmail,
                 passwordHash,
                 typeof telefono_corporativo === 'string' ? telefono_corporativo.trim() : null,
-                typeof empresa === 'string' ? empresa.trim() : null,
+                invitation.empresa,
                 typeof profilePhoto === 'string' ? profilePhoto : null,
                 PRIVACY_NOTICE_VERSION,
                 true,
@@ -182,12 +224,14 @@ export const registerAdmin = async (req: Request, res: Response): Promise<void> 
                 marketingConsent === true,
                 encryptFaceData(JSON.stringify(faceDescriptor)),
                 encryptFaceData(totpSecret),
+                invitation.id,
+                invitation.role,
             ]
         );
 
         const recorded = await writeAuditLog(req, {
             action: 'REGISTRATION_STARTED',
-            details: { email: normalizedEmail, privacyVersion: PRIVACY_NOTICE_VERSION },
+            details: { email: normalizedEmail, privacyVersion: PRIVACY_NOTICE_VERSION, invitationId: invitation.id },
         });
         if (!recorded) {
             res.status(503).json({ error: 'No fue posible registrar el inicio del proceso de alta.' });
@@ -212,6 +256,91 @@ export const registerAdmin = async (req: Request, res: Response): Promise<void> 
     }
 };
 
+export const completeAdminOnboarding = async (req: AuthRequest, res: Response): Promise<void> => {
+    const adminId = req.admin?.id;
+    const { nombre, telefono_corporativo, empresa, password, faceDescriptor,
+        privacyNoticeAccepted, biometricConsent, marketingConsent } = req.body ?? {};
+
+    if (!adminId || typeof nombre !== 'string' || nombre.trim().length < 2 || nombre.trim().length > 120) {
+        res.status(400).json({ error: 'El nombre debe tener entre 2 y 120 caracteres.' });
+        return;
+    }
+    if (typeof password !== 'string' || password.length < 12 || password.length > 128
+        || !/\p{Ll}/u.test(password) || !/\p{Lu}/u.test(password) || !/\p{N}/u.test(password)) {
+        res.status(400).json({ error: 'La nueva contraseña debe tener entre 12 y 128 caracteres e incluir mayúscula, minúscula y número.' });
+        return;
+    }
+    if (!isFaceDescriptor(faceDescriptor) || privacyNoticeAccepted !== true || biometricConsent !== true) {
+        res.status(400).json({ error: 'Completa el reconocimiento facial y acepta el aviso de privacidad y el consentimiento biométrico.' });
+        return;
+    }
+
+    try {
+        const passwordHash = await bcrypt.hash(password, 12);
+        const totpSecret = generateSecret();
+        const setupJti = randomUUID();
+        const result = await pool.query(
+            `UPDATE admins
+             SET nombre = $2,
+                 telefono_corporativo = $3,
+                 empresa = COALESCE(NULLIF($4, ''), empresa),
+                 password = $5,
+                 face_template_encrypted = $6,
+                 mfa_facial_status = TRUE,
+                 totp_secret_encrypted = $7,
+                 totp_enabled = FALSE,
+                 mfa_nonce = $8,
+                 mfa_setup_expires_at = NOW() + INTERVAL '15 minutes',
+                 updated_at = NOW()
+             WHERE id = $1 AND first_login_required = TRUE AND account_status = 'active'
+             RETURNING id, nombre, email, telefono_corporativo, empresa, profile_photo` ,
+            [adminId, nombre.trim(), typeof telefono_corporativo === 'string' ? telefono_corporativo.trim() : null,
+                typeof empresa === 'string' ? empresa.trim() : '', passwordHash,
+                encryptFaceData(JSON.stringify(faceDescriptor)), encryptFaceData(totpSecret), setupJti]
+        );
+        if (result.rowCount !== 1) {
+            res.status(403).json({ error: 'La cuenta no está disponible para activación inicial.' });
+            return;
+        }
+        const privacyDocument = await pool.query(
+            `SELECT id FROM privacy_documents WHERE document_type = 'privacy_notice' AND version = $1 LIMIT 1`,
+            [PRIVACY_NOTICE_VERSION]
+        );
+        const privacyDocumentId = privacyDocument.rows[0]?.id ?? null;
+        await pool.query(
+            `INSERT INTO privacy_consents (admin_id, document_id, consent_type, accepted, version, ip_address, user_agent)
+             VALUES ($1, $2, 'privacy_notice', TRUE, $3, $4, $5),
+                    ($1, $2, 'biometric', TRUE, $3, $4, $5),
+                    ($1, $2, 'marketing', $6, $3, $4, $5)`,
+            [adminId, privacyDocumentId, PRIVACY_NOTICE_VERSION, req.ip ?? null, req.get('user-agent') ?? null, marketingConsent === true]
+        );
+        await writeAuditLog(req, {
+            adminId,
+            action: 'ADMIN_ONBOARDING_STARTED',
+            resourceType: 'admin',
+            resourceId: adminId,
+            details: { privacyVersion: PRIVACY_NOTICE_VERSION, marketingConsent: marketingConsent === true },
+        });
+        await writeAuditLog(req, {
+            adminId,
+            action: 'PRIVACY_NOTICE_ACCEPTED',
+            resourceType: 'privacy_notice',
+            resourceId: PRIVACY_NOTICE_VERSION,
+            details: { version: PRIVACY_NOTICE_VERSION, stage: 'onboarding' },
+        });
+        res.json({
+            success: true,
+            setupToken: signToken({ id: adminId, email: req.admin?.email ?? '', nombre: nombre.trim() }, 'setup', setupJti),
+            otpAuthUrl: generateURI({ issuer: 'SIGILIA', label: req.admin?.email ?? '', secret: totpSecret }),
+            expiresInSeconds: 900,
+            admin: result.rows[0],
+        });
+    } catch (error) {
+        console.error('Error al completar la activación inicial:', error);
+        res.status(500).json({ error: 'No fue posible activar la cuenta.' });
+    }
+};
+
 export const verifyRegistrationTotp = async (req: AuthRequest, res: Response): Promise<void> => {
     const enrollmentId = req.admin?.enrollmentJti;
     const { otpCode } = req.body ?? {};
@@ -224,7 +353,8 @@ export const verifyRegistrationTotp = async (req: AuthRequest, res: Response): P
         const result = await pool.query(
             `SELECT id, nombre, email, password, telefono_corporativo, empresa, profile_photo,
                     privacy_notice_version, privacy_notice_accepted, biometric_consent, marketing_consent,
-                    face_template_encrypted, totp_secret_encrypted, failed_attempts, locked_until
+                    face_template_encrypted, totp_secret_encrypted, failed_attempts, locked_until,
+                    invitation_id, account_role
              FROM pending_admin_enrollments
              WHERE id = $1 AND expires_at > NOW()`,
             [enrollmentId]
@@ -256,9 +386,9 @@ export const verifyRegistrationTotp = async (req: AuthRequest, res: Response): P
             await client.query('BEGIN');
             const inserted = await client.query(
                 `INSERT INTO admins
-                    (nombre, email, password, telefono_corporativo, empresa, profile_photo, face_template_encrypted,
+                    (nombre, email, password, telefono_corporativo, empresa, profile_photo, account_role, face_template_encrypted,
                      totp_secret_encrypted, totp_enabled, totp_last_used_step, mfa_facial_status)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE, $9, TRUE)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, TRUE, $10, TRUE)
                  RETURNING id, nombre, email, telefono_corporativo, empresa, profile_photo, mfa_facial_status`,
                 [
                     pending.nombre,
@@ -267,12 +397,23 @@ export const verifyRegistrationTotp = async (req: AuthRequest, res: Response): P
                     pending.telefono_corporativo,
                     pending.empresa,
                     pending.profile_photo,
+                    pending.account_role ?? 'admin',
                     pending.face_template_encrypted,
                     pending.totp_secret_encrypted,
                     verification.timeStep,
                 ]
             );
             admin = inserted.rows[0];
+            const invitationUsed = await client.query(
+                `UPDATE admin_invitations
+                 SET used_at = CURRENT_TIMESTAMP
+                 WHERE id = $1 AND used_at IS NULL
+                 RETURNING id`,
+                [pending.invitation_id]
+            );
+            if (invitationUsed.rowCount !== 1) {
+                throw new Error('La invitación ya fue utilizada o dejó de estar disponible.');
+            }
             const privacyDocument = await client.query(
                 `SELECT id FROM privacy_documents WHERE document_type = 'privacy_notice' AND version = $1 LIMIT 1`,
                 [pending.privacy_notice_version ?? PRIVACY_NOTICE_VERSION],
@@ -350,12 +491,13 @@ export const loginStepOne = async (req: Request, res: Response): Promise<void> =
     try {
         const result = await pool.query(
             `SELECT id, nombre, email, password, face_template_encrypted, totp_secret_encrypted,
-                    totp_enabled, mfa_facial_status, mfa_locked_until, account_status
+                    totp_enabled, mfa_facial_status, mfa_locked_until, account_status,
+                    first_login_required, temporary_password_expires_at
              FROM admins WHERE email = $1`,
             [email.trim().toLowerCase()]
         );
         const admin = result.rows[0];
-        if (admin && admin.account_status === 'cancelled') {
+        if (admin && ['cancelled', 'blocked'].includes(admin.account_status)) {
             await writeAuditLog(req, {
                 adminId: admin.id,
                 action: 'LOGIN_BLOCKED_CANCELLED',
@@ -384,6 +526,21 @@ export const loginStepOne = async (req: Request, res: Response): Promise<void> =
             return;
         }
         if (sendLockedResponse(res, admin.mfa_locked_until)) return;
+
+        if (admin.first_login_required) {
+            if (admin.temporary_password_expires_at && new Date(admin.temporary_password_expires_at).getTime() <= Date.now()) {
+                res.status(403).json({ error: 'La contraseña temporal expiró. Solicita una nueva a soporte de SIGILIA.' });
+                return;
+            }
+            res.json({
+                success: true,
+                onboardingRequired: true,
+                onboardingToken: signToken(identityFromRow(admin), 'onboarding', randomUUID()),
+                admin: { id: admin.id, nombre: admin.nombre, email: admin.email, empresa: admin.empresa },
+                message: 'Primer acceso detectado. Completa la activación de tu cuenta para configurar una nueva contraseña y MFA.',
+            });
+            return;
+        }
 
         const identity = identityFromRow(admin);
         const mfaJti = randomUUID();
@@ -480,7 +637,8 @@ export const completeMfaSetup = async (req: AuthRequest, res: Response): Promise
             `UPDATE admins
              SET totp_enabled = TRUE, mfa_facial_status = $3, face_template_encrypted = $4,
                  totp_last_used_step = $5, mfa_nonce = NULL, mfa_setup_expires_at = NULL,
-                 mfa_failed_attempts = 0, mfa_locked_until = NULL, updated_at = NOW()
+                 mfa_failed_attempts = 0, mfa_locked_until = NULL, first_login_required = FALSE,
+                 temporary_password_expires_at = NULL, updated_at = NOW()
              WHERE id = $1 AND mfa_nonce = $2 AND totp_enabled = FALSE
                AND mfa_setup_expires_at > NOW()
                AND (totp_last_used_step IS NULL OR totp_last_used_step < $5)

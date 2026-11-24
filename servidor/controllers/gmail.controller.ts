@@ -5,7 +5,7 @@ const CONTACT_EMAIL = 'sigil.ia.soporte@gmail.com';
 const STATE_TTL_MS = 10 * 60 * 1000;
 const MAX_ATTACHMENT_SIZE = 5 * 1024 * 1024;
 const MAX_TOTAL_ATTACHMENTS = 10 * 1024 * 1024;
-const ARCO_RIGHTS = new Set(['acceso', 'rectificacion', 'cancelacion', 'oposicion']);
+const ARCO_RIGHTS = new Set(['acceso', 'rectificacion', 'cancelacion']);
 const ALLOWED_ATTACHMENT_TYPES = new Set([
     'application/pdf',
     'image/png',

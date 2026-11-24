@@ -14,7 +14,7 @@ export interface AuthRequest extends Request {
   };
 }
 
-type TokenPurpose = 'mfa' | 'access' | 'enroll' | 'setup';
+type TokenPurpose = 'mfa' | 'access' | 'enroll' | 'setup' | 'onboarding';
 
 function authenticate(purpose: TokenPurpose, req: AuthRequest, res: Response): boolean {
   const authorization = req.headers.authorization;
@@ -60,8 +60,8 @@ export const requireAuth = async (req: AuthRequest, res: Response, next: NextFun
       'SELECT account_status FROM admins WHERE id = $1',
       [req.admin?.id]
     );
-    if (result.rows[0]?.account_status === 'cancelled') {
-      res.status(403).json({ error: 'Esta cuenta fue dada de baja.' });
+    if (['cancelled', 'blocked'].includes(result.rows[0]?.account_status)) {
+      res.status(403).json({ error: 'Esta cuenta está bloqueada o fue dada de baja.' });
       return;
     }
   } catch {
@@ -81,4 +81,8 @@ export const requireEnrollmentSession = (req: AuthRequest, res: Response, next: 
 
 export const requireMfaSetup = (req: AuthRequest, res: Response, next: NextFunction): void => {
   if (authenticate('setup', req, res)) next();
+};
+
+export const requireOnboardingSession = (req: AuthRequest, res: Response, next: NextFunction): void => {
+  if (authenticate('onboarding', req, res)) next();
 };

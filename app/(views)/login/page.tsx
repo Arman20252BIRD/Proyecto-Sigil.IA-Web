@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
 import Image from "next/image";
+import Link from "next/link";
 import AuthPanelQuery from "./auth-panel-query";
 import styles from "./page.module.css";
 import { LegalLinks } from "../legal/components/LegalLinks";
@@ -12,7 +13,7 @@ export const metadata: Metadata = {
 
 export default function LoginPage() {
   return <main className={styles.page} data-theme-surface>
-    <header className={styles.header}><div className={styles.logoLink} aria-label="SIGILIA"><Image src="/logo-sigilia-original.png" alt="SIGILIA" width={2560} height={960} priority /></div></header>
+    <header className={styles.header}><Link className={styles.logoLink} href="/informativo" aria-label="Ir al inicio de SIGILIA"><Image src="/logo-sigilia-original.png" alt="SIGILIA" width={2560} height={960} priority /></Link></header>
     <div className={styles.layout}>
       <section className={styles.assurance}><span className={styles.kicker}>Autenticación multifactor</span><h1><span className={styles.titleAccent}>Control seguro</span> para tu operación.</h1><p>El acceso combina contraseña y un segundo factor facial procesado en el navegador o códigos TOTP de una aplicación autenticadora.</p><div className={styles.assuranceFoot}><span className={styles.statusDot} /> Portal administrativo SIGILIA</div></section>
       <Suspense fallback={<div className={styles.panel} role="status">Cargando acceso…</div>}>

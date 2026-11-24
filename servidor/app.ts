@@ -10,6 +10,8 @@ import {
     loginStepOne,
     requestPasswordReset,
     resetPassword,
+    validateAdminInvitation,
+    completeAdminOnboarding,
     registerAdmin,
     verifyFacialMfa,
     verifyPasswordResetTotp,
@@ -38,6 +40,7 @@ import {
     requireEnrollmentSession,
     requireMfaSession,
     requireMfaSetup,
+    requireOnboardingSession,
 } from './middleware/auth.middleware';
 
 const app = express();
@@ -80,6 +83,8 @@ app.get('/api/health', async (req: Request, res: Response) => {
 
 // --- RUTAS DE AUTENTICACIÓN (LOGIN SIGIL.IA) ---
 app.post('/api/auth/register', authRateLimit, registerAdmin);
+app.post('/api/auth/invitation/validate', authRateLimit, validateAdminInvitation);
+app.post('/api/auth/onboarding/complete', authRateLimit, requireOnboardingSession, completeAdminOnboarding);
 app.post('/api/auth/register/verify-totp', authRateLimit, requireEnrollmentSession, verifyRegistrationTotp);
 app.post('/api/auth/login-step1', authRateLimit, loginStepOne);
 app.post('/api/auth/password-reset/request', authRateLimit, requestPasswordReset);

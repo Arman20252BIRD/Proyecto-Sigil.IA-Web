@@ -8,7 +8,7 @@ import GmailStatus from "./gmail-status";
 
 export const metadata: Metadata = {
   title: "Solicitud ARCO | SIGILIA",
-  description: "Solicita acceso, rectificación, cancelación u oposición de tus datos personales.",
+  description: "Solicita acceso, rectificación o cancelación de tus datos personales.",
 };
 
 export default function ArcoPage() {
@@ -17,7 +17,7 @@ export default function ArcoPage() {
     <section className={styles.card}>
       <span className={styles.kicker}>DERECHOS ARCO</span>
       <h1>Solicitud de datos personales</h1>
-      <p>Usa este formulario para solicitar acceso, rectificación, cancelación u oposición al tratamiento de tus datos.</p>
+      <p>Usa este formulario para solicitar acceso, rectificación o cancelación de tus datos personales.</p>
       <Suspense fallback={null}><GmailStatus /></Suspense>
       <ArcoForm />
       <a className={styles.download} href="/legal/formato-solicitud-arco.pdf" download>Descargar formato ARCO PDF</a>

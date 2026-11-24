@@ -87,7 +87,7 @@ export default function ArcoForm() {
   return <form className={styles.form} onSubmit={submit}>
     <label>Nombre completo<input name="nombre" required /></label>
     <label>Correo o medio para recibir notificaciones<input name="contacto" type="email" required /></label>
-    <label>Derecho solicitado<select name="derecho" defaultValue="acceso"><option value="acceso">Acceso</option><option value="rectificacion">Rectificación</option><option value="cancelacion">Cancelación</option><option value="oposicion">Oposición</option></select></label>
+    <label>Derecho solicitado<select name="derecho" defaultValue="acceso"><option value="acceso">Acceso</option><option value="rectificacion">Rectificación</option><option value="cancelacion">Cancelación</option></select></label>
     <label>Descripción breve de la solicitud</label>
     <div className={styles.editor}>
       <div className={styles.editorToolbar} aria-label="Formato del texto">

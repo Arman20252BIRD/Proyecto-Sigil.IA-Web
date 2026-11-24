@@ -39,11 +39,14 @@ type AuthResponse = {
   enrollmentToken?: string;
   otpAuthUrl?: string;
   enrollmentRequired?: boolean;
+  onboardingRequired?: boolean;
+  onboardingToken?: string;
   facialMfaEnabled?: boolean;
   resetToken?: string;
+  admin?: { id?: string | number; email?: string; nombre?: string; empresa?: string };
 };
 
-export default function AuthPanel({ initialResetToken = "" }: { initialResetToken?: string }) {
+export default function AuthPanel({ initialResetToken = "", initialInvitationToken = "" }: { initialResetToken?: string; initialInvitationToken?: string }) {
   const router = useRouter();
   const [tab, setTab] = useState<Tab>("login");
   const [loginStep, setLoginStep] = useState<1 | 2>(1);
@@ -51,8 +54,15 @@ export default function AuthPanel({ initialResetToken = "" }: { initialResetToke
   const [notice, setNotice] = useState("");
   const [forgotPassword, setForgotPassword] = useState(false);
   const [resetToken, setResetToken] = useState(initialResetToken);
+  const initialInvite = initialInvitationToken;
+  const [invitationInput, setInvitationInput] = useState(initialInvitationToken);
+  const [validatedInvitationToken, setValidatedInvitationToken] = useState("");
+  const [invitationDetails, setInvitationDetails] = useState<{ email: string; empresa: string } | null>(null);
+  const invitationForRegistration = initialInvite || validatedInvitationToken;
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [mfaToken, setMfaToken] = useState("");
+  const [onboardingToken, setOnboardingToken] = useState("");
+  const [onboardingEmail, setOnboardingEmail] = useState("");
   const [setupEnrollment, setSetupEnrollment] = useState<Enrollment | null>(null);
   const [pendingRegistration, setPendingRegistration] = useState<Enrollment | null>(null);
   const [facialMfaEnabled, setFacialMfaEnabled] = useState(false);
@@ -255,7 +265,15 @@ export default function AuthPanel({ initialResetToken = "" }: { initialResetToke
 
       setLoginStep(2);
       setOtpCode("");
-      if (result.enrollmentRequired && result.setupToken && result.otpAuthUrl) {
+      if (result.onboardingRequired && result.onboardingToken) {
+        setOnboardingToken(result.onboardingToken);
+        setOnboardingEmail(String(result.admin?.email ?? formData.get("email") ?? ""));
+        setTab("register");
+        setLoginStep(1);
+        setSetupEnrollment(null);
+        setMfaToken("");
+        setNotice(result.message ?? "Completa la activación inicial de tu cuenta.");
+      } else if (result.enrollmentRequired && result.setupToken && result.otpAuthUrl) {
         setSetupEnrollment({ token: result.setupToken, otpAuthUrl: result.otpAuthUrl });
         setMfaToken("");
         setFacialMfaEnabled(false);
@@ -346,13 +364,18 @@ export default function AuthPanel({ initialResetToken = "" }: { initialResetToke
     const formData = new FormData(form);
     const password = String(formData.get("password") ?? "");
     const name = String(formData.get("name") ?? "").trim();
-    const email = String(formData.get("email") ?? "").trim();
+    const email = (onboardingEmail || String(formData.get("email") ?? "")).trim();
+    const invitationToken = String(formData.get("invitationToken") ?? "").trim();
     if (name.length < 2 || name.length > 120) {
       setNotice("El nombre debe tener entre 2 y 120 caracteres.");
       return;
     }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       setNotice("Escribe un correo electrónico válido.");
+      return;
+    }
+    if (!onboardingToken && !invitationToken) {
+      setNotice("Pega el código de invitación enviado por soporte de SIGILIA.");
       return;
     }
     const requirements = getPasswordRequirements(password);
@@ -378,13 +401,15 @@ export default function AuthPanel({ initialResetToken = "" }: { initialResetToke
 
     setIsSubmitting(true);
     try {
-      const response = await fetch(`${API_URL}/api/auth/register`, {
+      const response = await fetch(`${API_URL}${onboardingToken ? "/api/auth/onboarding/complete" : "/api/auth/register"}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        ...(onboardingToken ? { Authorization: `Bearer ${onboardingToken}` } : {}),
         body: JSON.stringify({
           nombre: name,
           empresa: formData.get("company"),
-          email,
+          email: onboardingEmail || email,
+          ...(onboardingToken ? {} : { invitationToken }),
           telefono_corporativo: formData.get("phone"),
           password,
           faceDescriptor,
@@ -394,12 +419,19 @@ export default function AuthPanel({ initialResetToken = "" }: { initialResetToke
         }),
       });
       const result: AuthResponse = await response.json();
-      if (!response.ok || !result.success || !result.enrollmentToken || !result.otpAuthUrl) {
+      if (!response.ok || !result.success || !(onboardingToken ? result.setupToken : result.enrollmentToken) || !result.otpAuthUrl) {
         setNotice(result.error ?? "No fue posible iniciar el enrolamiento.");
         return;
       }
 
-      setPendingRegistration({ token: result.enrollmentToken, otpAuthUrl: result.otpAuthUrl });
+      if (onboardingToken) {
+        setSetupEnrollment({ token: result.setupToken!, otpAuthUrl: result.otpAuthUrl });
+        setOnboardingToken("");
+        setTab("login");
+        setLoginStep(2);
+      } else {
+        setPendingRegistration({ token: result.enrollmentToken!, otpAuthUrl: result.otpAuthUrl });
+      }
       setCapturedFaceDescriptor(null);
       stopCamera();
       setOtpCode("");
@@ -407,6 +439,37 @@ export default function AuthPanel({ initialResetToken = "" }: { initialResetToke
       setNotice(result.message ?? "Escanea el código con tu aplicación autenticadora.");
     } catch {
       setNotice("No fue posible conectar con el backend para crear la cuenta.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function validateInvitation() {
+    const token = invitationInput.trim();
+    if (!token) {
+      setNotice("Pega el código de invitación enviado por soporte de SIGILIA.");
+      return;
+    }
+    setIsSubmitting(true);
+    setNotice("");
+    try {
+      const response = await fetch(`${API_URL}/api/auth/invitation/validate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ invitationToken: token }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.valid) {
+        setValidatedInvitationToken("");
+        setInvitationDetails(null);
+        setNotice(result.error ?? "La invitación no pudo validarse.");
+        return;
+      }
+      setValidatedInvitationToken(token);
+      setInvitationDetails({ email: result.email, empresa: result.empresa });
+      setNotice("Invitación válida. Ya puedes activar la cuenta autorizada.");
+    } catch {
+      setNotice("No fue posible conectar con el backend para validar la invitación.");
     } finally {
       setIsSubmitting(false);
     }
@@ -536,6 +599,8 @@ export default function AuthPanel({ initialResetToken = "" }: { initialResetToke
     setOtpCode("");
     setRegistrationPassword("");
     setRegistrationPasswordConfirm("");
+    setOnboardingToken("");
+    setOnboardingEmail("");
     setNotice("");
   }
 
@@ -552,16 +617,13 @@ export default function AuthPanel({ initialResetToken = "" }: { initialResetToke
     setOtpCode("");
     setRegistrationPassword("");
     setRegistrationPasswordConfirm("");
+    setOnboardingToken("");
+    setOnboardingEmail("");
     setNotice("");
   }
 
   return (
     <section className={styles.panel}>
-      <div className={styles.tabs}>
-        <button className={tab === "login" ? styles.tabActive : ""} onClick={() => changeTab("login")}>Iniciar sesión</button>
-        <button className={tab === "register" ? styles.tabActive : ""} onClick={() => changeTab("register")}>Crear cuenta</button>
-      </div>
-
       {tab === "login" && loginStep === 1 && resetToken && (
         <form className={styles.form} onSubmit={submitPasswordReset}>
           <FormHeader step="RESTABLECER CONTRASEÑA" title="Crea una nueva contraseña" text="Elige una contraseña segura para volver a acceder a tu cuenta." />
@@ -692,13 +754,30 @@ export default function AuthPanel({ initialResetToken = "" }: { initialResetToke
         />
       )}
 
-      {tab === "register" && !pendingRegistration && (
+      {tab === "register" && !pendingRegistration && !onboardingToken && (
+        <div className={styles.form}>
+          <FormHeader
+            step="ACCESO RESTRINGIDO"
+            title="Activa tu cuenta autorizada"
+            text="Esta plataforma es exclusiva para administradores autorizados por SIGILIA."
+          />
+          <p className={styles.notice}>
+            Soporte de SIGILIA debe crear previamente tu cuenta y enviarte un correo corporativo con una contraseña temporal.
+            Regresa a “Iniciar sesión” y utiliza esas credenciales para comenzar la activación.
+          </p>
+          <button type="button" className={styles.primaryButton} onClick={() => changeTab("login")}>
+            Volver a iniciar sesión <span>→</span>
+          </button>
+        </div>
+      )}
+
+      {tab === "register" && !pendingRegistration && onboardingToken && (
         <form className={styles.form} onSubmit={submitRegister}>
-          <FormHeader step="ALTA DE ADMINISTRADOR" title="Crea tu cuenta corporativa" text="Registra tu rostro y activa una aplicación autenticadora antes de crear la cuenta." />
+          <FormHeader step="PRIMER ACCESO" title="Completa tu registro corporativo" text="Cambia tu contraseña temporal, registra tus datos y configura MFA para entrar al dashboard." />
           <div className={styles.fieldGrid}>
             <Field label="Nombre completo" name="name" placeholder="Nombre y apellidos" />
             <Field label="Empresa" name="company" placeholder="Nombre de la empresa" />
-            <Field label="Correo corporativo" name="email" type="email" placeholder="admin@empresa.com" />
+            <Field label="Correo corporativo" name="email" type="email" placeholder="admin@empresa.com" defaultValue={onboardingEmail} disabled={Boolean(onboardingToken)} />
             <Field label="Teléfono" name="phone" type="tel" placeholder="+52 000 000 0000" />
             <Field
               label="Contraseña"
@@ -747,7 +826,7 @@ export default function AuthPanel({ initialResetToken = "" }: { initialResetToke
             <span>Acepto recibir comunicados opcionales sobre mejoras y encuestas de SIGILIA.</span>
           </label>
           <button className={styles.primaryButton} type="submit" disabled={isSubmitting || faceState === "processing"}>
-            {isSubmitting ? "Registrando..." : "Registrar administrador"} <span>→</span>
+            {isSubmitting ? "Activando..." : "Activar cuenta autorizada"} <span>→</span>
           </button>
         </form>
       )}
@@ -768,7 +847,7 @@ export default function AuthPanel({ initialResetToken = "" }: { initialResetToke
           </section>
         </div>
       )}
-      <p className={styles.panelFoot}>Los modelos se ejecutan localmente en el navegador. La plantilla cifrada se usa solo para comparación; el análisis de vida no sustituye un sistema certificado anti-suplantación.</p>
+      <p className={styles.panelFoot}>El acceso está restringido a administradores autorizados. SIGILIA crea previamente la cuenta y envía las credenciales corporativas; en el primer acceso se solicita cambiar la contraseña y configurar MFA.</p>
     </section>
   );
 }
@@ -783,6 +862,8 @@ function Field({
   type = "text",
   placeholder,
   autoComplete,
+  defaultValue,
+  disabled,
   maxLength,
   inputMode,
   pattern,
@@ -793,6 +874,8 @@ function Field({
   type?: string;
   placeholder: string;
   autoComplete?: string;
+  defaultValue?: string;
+  disabled?: boolean;
   maxLength?: number;
   inputMode?: "numeric" | "text";
   pattern?: string;
@@ -806,6 +889,8 @@ function Field({
         type={type}
         placeholder={placeholder}
         autoComplete={autoComplete}
+        defaultValue={defaultValue}
+        disabled={disabled}
         maxLength={maxLength}
         inputMode={inputMode}
         pattern={pattern}

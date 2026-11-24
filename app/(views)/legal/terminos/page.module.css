@@ -1,7 +1,7 @@
 .page { min-height: 100vh; color: #131b2e; background: linear-gradient(135deg, #f7f8ff, #fff 55%, #eef2ff); font-family: Arial, Helvetica, sans-serif; }
-.header { display: flex; align-items: center; justify-content: space-between; min-height: 144px; padding: 18px max(24px, calc((100% - 1120px) / 2)); background: #fff; border-bottom: 1px solid #d5d8e5; }
-.brand { display: block; width: 225px; height: 100px; }
-.brand img { display: block; width: 225px; height: 100px; object-fit: contain; }
+.header { display: flex; align-items: center; justify-content: space-between; min-height: 112px; padding: 18px max(24px, calc((100% - 1120px) / 2)); background: #fff; border-bottom: 1px solid #d5d8e5; }
+.brand { display: block; width: 200px; height: 75px; }
+.brand img { display: block; width: 200px; height: 75px; object-fit: contain; }
 .header a:last-child { color: #0037b0; font-size: 12px; text-decoration: none; }
 .header a:last-child:hover { text-decoration: underline; }
 .version { color: #606477; font-size: 11px; }

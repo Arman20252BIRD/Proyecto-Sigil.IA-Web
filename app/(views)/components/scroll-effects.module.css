@@ -1,0 +1,9 @@
+.landing > section,.publicPage > section,.landing > footer,.publicPage > footer{opacity:1;transform:none;filter:none}
+.landing > footer,.publicPage > footer{animation:none!important}
+.landing :global(article),.publicPage :global(article){transition:transform .35s ease,box-shadow .35s ease,border-color .35s ease}.landing :global(article:hover),.publicPage :global(article:hover){transform:translateY(-6px);box-shadow:0 18px 35px rgba(19,27,46,.1);border-color:#9eb2ed}
+@supports(animation-timeline:view()){.landing > section,.publicPage > section{opacity:0;transform:translateY(32px);filter:none;animation:sectionReveal linear both;animation-timeline:view();animation-range:entry 0% cover 30%}.landing > section:first-of-type,.publicPage > section:first-of-type{animation-range:entry 0% cover 18%}}
+@supports not (animation-timeline:view()){.landing > section,.publicPage > section{animation:sectionFallback .8s ease both}}
+@keyframes sectionReveal{from{opacity:0;transform:translateY(32px);filter:none}to{opacity:1;transform:translateY(0);filter:none}}
+@keyframes sectionFallback{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:translateY(0)}}
+@media(prefers-reduced-motion:reduce){.landing > section,.landing > footer,.publicPage > section,.publicPage > footer{opacity:1;transform:none;filter:none;animation:none}}
+.landing > section,.publicPage > section{opacity:1!important;transform:none!important;filter:none!important;animation:none!important}

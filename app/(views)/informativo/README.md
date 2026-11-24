@@ -2,13 +2,13 @@
 
 ## Objetivo
 
-Landing pública de Sigil.IA basada en el HTML de referencia y en la documentación del proyecto. Explica la plataforma de ciberseguridad y telemetría vehicular de forma clara para visitantes y clientes corporativos.
+Landing pública de SIGILIA basada en el HTML de referencia y en la documentación del proyecto. Explica la plataforma de ciberseguridad y telemetría vehicular de forma clara para visitantes y clientes corporativos.
 
 ## Estructura
 
 - `page.tsx`: navegación, hero, contenido del proyecto, funciones y footer.
 - `page.module.css`: estilos locales, responsive, animaciones y estados visuales.
-- `public/sigil-logo.png`: logo transparente usado en el encabezado.
+- `public/logo-sigilia-original.png`: logotipo oficial utilizado en la aplicación.
 
 ## Cambios de experiencia
 

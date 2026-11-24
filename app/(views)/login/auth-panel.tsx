@@ -744,7 +744,7 @@ export default function AuthPanel({ initialResetToken = "" }: { initialResetToke
           </label>
           <label className={styles.consent}>
             <input type="checkbox" name="marketingConsent" />
-            <span>Acepto recibir comunicados opcionales sobre mejoras y encuestas de Sigil.IA.</span>
+            <span>Acepto recibir comunicados opcionales sobre mejoras y encuestas de SIGILIA.</span>
           </label>
           <button className={styles.primaryButton} type="submit" disabled={isSubmitting || faceState === "processing"}>
             {isSubmitting ? "Registrando..." : "Registrar administrador"} <span>→</span>
@@ -758,7 +758,7 @@ export default function AuthPanel({ initialResetToken = "" }: { initialResetToke
           <section className={styles.privacyModal} role="dialog" aria-modal="true" aria-labelledby="privacy-title">
             <span className={styles.kicker}>INFORMACIÓN LEGAL · VERSIÓN 1.0</span>
             <h2 id="privacy-title">Aviso de privacidad</h2>
-            <p>Antes de crear una cuenta, revisa cómo Sigil.IA trata tus datos personales, la plantilla facial, la telemetría y los registros de seguridad.</p>
+            <p>Antes de crear una cuenta, revisa cómo SIGILIA trata tus datos personales, la plantilla facial, la telemetría y los registros de seguridad.</p>
             <div className={styles.privacySummary}><span><b>Datos tratados</b> Identificación, contacto, autenticación, GPS, eventos y datos técnicos.</span><span><b>Biometría</b> El descriptor facial se procesa para MFA y se almacena cifrado; no se guarda la fotografía.</span><span><b>Tus derechos</b> Puedes solicitar acceso, rectificación, cancelación u oposición mediante ARCO.</span></div>
             <label className={styles.privacyAcceptance}><input type="checkbox" checked={privacyNoticeAccepted} onChange={(event) => void handlePrivacyNoticeChange(event.target.checked)} /><span>Acepto el Aviso de privacidad y el tratamiento de mis datos conforme a la versión 1.0.</span></label>
             {privacyConsentStatus === "saving" && <p className={styles.privacyConsentStatus} role="status">Registrando tu aceptación...</p>}

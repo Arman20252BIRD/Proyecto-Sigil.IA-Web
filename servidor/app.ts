@@ -32,6 +32,7 @@ import { getEventsDashboard, getGpsTracking, ingestDeviceEvent } from './control
 import { requireDeviceKey } from './middleware/device-auth.middleware';
 import { authorizeArcoWithGmail, gmailArcoCallback } from './controllers/gmail.controller';
 import { recordCookieDecision, recordPrivacyNoticeAcceptance } from './controllers/privacy.controller';
+import { sendQuoteRequest } from './controllers/quote.controller';
 import {
     requireAuth,
     requireEnrollmentSession,
@@ -89,6 +90,7 @@ app.post('/api/auth/verify-facial', authRateLimit, requireMfaSession, verifyFaci
 app.post('/api/auth/verify-totp', authRateLimit, requireMfaSession, verifyTotpMfa);
 app.post('/api/privacy/notice/accept', authRateLimit, recordPrivacyNoticeAcceptance);
 app.post('/api/privacy/cookies/decision', recordCookieDecision);
+app.post('/api/cotizacion', sendQuoteRequest);
 
 // --- RUTAS DE ADMINISTRADOR ---
 app.get('/api/admin', requireAuth, getAdminProfile);

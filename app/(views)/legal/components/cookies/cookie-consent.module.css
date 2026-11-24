@@ -6,8 +6,8 @@
   align-items: end;
   justify-items: center;
   padding: 0 20px 20px;
-  background: #131b2e80;
-  backdrop-filter: blur(5px);
+  background: #131b2e22;
+  backdrop-filter: none;
 }
 
 .banner {

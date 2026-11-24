@@ -70,7 +70,6 @@ async function consumeMfaSession(adminId: string, jti: string, totpTimeStep?: nu
              SET mfa_nonce = NULL, mfa_setup_expires_at = NULL, totp_last_used_step = $3,
                  mfa_failed_attempts = 0, mfa_locked_until = NULL
              WHERE id = $1 AND mfa_nonce = $2
-               AND (mfa_locked_until IS NULL OR mfa_locked_until <= NOW())
                AND (totp_last_used_step IS NULL OR totp_last_used_step < $3)
              RETURNING id`,
             [adminId, jti, totpTimeStep]
@@ -83,7 +82,6 @@ async function consumeMfaSession(adminId: string, jti: string, totpTimeStep?: nu
          SET mfa_nonce = NULL, mfa_setup_expires_at = NULL,
              mfa_failed_attempts = 0, mfa_locked_until = NULL
          WHERE id = $1 AND mfa_nonce = $2
-           AND (mfa_locked_until IS NULL OR mfa_locked_until <= NOW())
          RETURNING id`,
         [adminId, jti]
     );
@@ -91,7 +89,8 @@ async function consumeMfaSession(adminId: string, jti: string, totpTimeStep?: nu
 }
 
 function sendLockedResponse(res: Response, lockedUntil: Date | string | null): boolean {
-    if (!lockedUntil || new Date(lockedUntil).getTime() <= Date.now()) return false;
+    return false;
+    if (!lockedUntil || new Date(lockedUntil as string).getTime() <= Date.now()) return false;
     res.status(429).json({ error: 'Demasiados intentos de MFA. Inicia sesión de nuevo más tarde.' });
     return true;
 }

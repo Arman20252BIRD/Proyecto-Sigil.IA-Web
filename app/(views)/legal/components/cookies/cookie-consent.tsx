@@ -12,6 +12,7 @@ import {
 
 type OptionalConsent = {
   preferences: boolean;
+  analytics: boolean;
 };
 type CookieCategory = "necessary" | "preferences" | "services" | "analytics";
 
@@ -34,6 +35,12 @@ function getConsentValue() {
 }
 
 function allowsPreferences(value: string | null) {
+  if (value === "all") return true;
+  const match = /^custom-([01])-([01])$/.exec(value ?? "");
+  return match?.[1] === "1";
+}
+
+function allowsAnalytics(value: string | null) {
   return value === "all" || /^custom-[01]-1$/.test(value ?? "");
 }
 
@@ -61,6 +68,7 @@ export default function CookieConsent() {
   const [preferences, setPreferences] = useState(false);
   const [category, setCategory] = useState<CookieCategory>("necessary");
   const [language, theme] = uiPreferences.split("-") as [InterfaceLanguage, InterfaceTheme];
+  const [analytics, setAnalytics] = useState(false);
   const [saveError, setSaveError] = useState("");
 
   useEffect(() => {
@@ -78,6 +86,7 @@ export default function CookieConsent() {
     function openCookieSettings() {
       if (consentValue === null || consentValue === "pending") return;
       setPreferences(allowsPreferences(consentValue));
+      setAnalytics(allowsAnalytics(consentValue));
       setCategory("necessary");
       setSettingsOpen(true);
       setCustomizing(true);
@@ -88,7 +97,14 @@ export default function CookieConsent() {
   }, [consentValue]);
 
   function saveConsent(nextConsent: OptionalConsent) {
-    const value = nextConsent.preferences ? "all" : "essential";
+    let value: string;
+    if (nextConsent.preferences && nextConsent.analytics) {
+      value = "all";
+    } else if (!nextConsent.preferences && !nextConsent.analytics) {
+      value = "essential";
+    } else {
+      value = `custom-${nextConsent.preferences ? "1" : "0"}-${nextConsent.analytics ? "1" : "0"}`;
+    }
     const previousConsent = getConsentValue();
     const secure = window.location.protocol === "https:" ? "; Secure" : "";
 
@@ -122,6 +138,7 @@ export default function CookieConsent() {
       body: JSON.stringify({
         decision: value,
         preferences: nextConsent.preferences,
+        analytics: nextConsent.analytics,
         version: "1.0",
         source: previousConsent === null ? "initial" : "updated",
       }),
@@ -149,7 +166,8 @@ export default function CookieConsent() {
         <h2 id="cookie-consent-title">Consentimiento de cookies</h2>
         <p>
           Usamos cookies necesarias para que el sitio funcione. Si lo autorizas,
-          también podremos usar cookies de preferencias para recordar el idioma y la apariencia.
+          también podremos usar cookies de preferencias y analíticas para recordar el idioma,
+          la apariencia y medir el uso general del sitio.
           Puedes cambiar tu elección antes de guardarla.
         </p>
       </div>
@@ -204,7 +222,10 @@ export default function CookieConsent() {
             </>}
             {category === "analytics" && <>
               <p className={styles.categoryIntro}>Se utilizan, con tu autorización, para obtener estadísticas generales de uso y mejorar la plataforma. No se emplean para publicidad personalizada.</p>
-              <CookieStatusRow title="Google Analytics" description="Permite medir visitas, interacciones y datos técnicos de navegación cuando aceptas las cookies analíticas." status="Opcionales" />
+              <label className={styles.preferenceToggle}>
+                <span><strong>Google Analytics</strong><small>Permite medir visitas, interacciones y datos técnicos de navegación.</small></span>
+                <input type="checkbox" checked={analytics} onChange={(event) => setAnalytics(event.target.checked)} />
+              </label>
               <CookieStatusRow title="Cookies publicitarias" description="No se crean perfiles publicitarios ni se comparten datos de navegación con anunciantes." status="No utilizadas" />
             </>}
           </div>
@@ -216,13 +237,13 @@ export default function CookieConsent() {
       <div className={styles.actions}>
         {!customizing ? (
           <>
-            <button className={styles.secondaryButton} onClick={() => saveConsent({ preferences: false })}>
+            <button className={styles.secondaryButton} onClick={() => saveConsent({ preferences: false, analytics: false })}>
               Rechazar cookies opcionales
             </button>
             <button className={styles.secondaryButton} aria-expanded={false} aria-controls="cookie-preferences" onClick={() => setCustomizing(true)}>
               Personalizar
             </button>
-            <button className={styles.primaryButton} onClick={() => saveConsent({ preferences: true })}>
+            <button className={styles.primaryButton} onClick={() => saveConsent({ preferences: true, analytics: true })}>
               Aceptar todas
             </button>
           </>
@@ -231,7 +252,7 @@ export default function CookieConsent() {
             <button className={styles.secondaryButton} aria-expanded={customizing} aria-controls="cookie-preferences" onClick={() => setCustomizing(false)}>
               Ocultar opciones
             </button>
-            <button className={styles.primaryButton} onClick={() => saveConsent({ preferences })}>
+            <button className={styles.primaryButton} onClick={() => saveConsent({ preferences, analytics })}>
               Guardar preferencias
             </button>
           </>

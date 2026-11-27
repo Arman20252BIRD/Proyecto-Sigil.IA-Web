@@ -119,7 +119,9 @@ function getCookieValue(name: string) {
 
 function hasPreferenceConsent() {
   const consent = getCookieValue("sigil_cookie_consent");
-  return consent === "all" || /^custom-[01]-1$/.test(consent ?? "");
+  if (consent === "all") return true;
+  const match = /^custom-(1)-[01]$/.exec(consent ?? "");
+  return match?.[1] === "1";
 }
 
 export function readInterfacePreferences(): InterfacePreferences {

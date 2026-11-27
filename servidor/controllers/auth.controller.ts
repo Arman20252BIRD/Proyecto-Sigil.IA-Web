@@ -10,6 +10,7 @@ import type { AuthRequest } from '../middleware/auth.middleware';
 import jwt from 'jsonwebtoken';
 import { createHash, randomBytes } from 'node:crypto';
 import { insertAuditLog, writeAuditLog } from '../models/audit-log.model';
+import { ensurePasswordResetSchema } from '../models/password-reset-token.model';
 
 const FACE_DESCRIPTOR_LENGTH = 1024;
 const FACE_MATCH_THRESHOLD = 0.5;
@@ -126,7 +127,7 @@ export const validateAdminInvitation = async (req: Request, res: Response): Prom
 };
 
 export const registerAdmin = async (req: Request, res: Response): Promise<void> => {
-    res.status(410).json({ error: 'El registro público está deshabilitado. La cuenta debe ser creada previamente por soporte de SIGILIA.' });
+    res.status(410).json({ error: 'El registro público está deshabilitado. La cuenta debe ser creada previamente por soporte de Sigilia.' });
     return;
 
     const { nombre, email, password, telefono_corporativo, empresa, faceDescriptor, profilePhoto,
@@ -149,7 +150,7 @@ export const registerAdmin = async (req: Request, res: Response): Promise<void> 
         return;
     }
     if (typeof invitationToken !== 'string' || !/^[A-Za-z0-9_-]{40,64}$/.test(invitationToken)) {
-        res.status(403).json({ error: 'El registro está cerrado. Necesitas una invitación válida emitida por SIGILIA.' });
+        res.status(403).json({ error: 'El registro está cerrado. Necesitas una invitación válida emitida por Sigilia.' });
         return;
     }
     if (!isFaceDescriptor(faceDescriptor)) {
@@ -259,7 +260,7 @@ export const registerAdmin = async (req: Request, res: Response): Promise<void> 
 export const completeAdminOnboarding = async (req: AuthRequest, res: Response): Promise<void> => {
     const adminId = req.admin?.id;
     const { nombre, telefono_corporativo, empresa, password, faceDescriptor,
-        privacyNoticeAccepted, biometricConsent, marketingConsent } = req.body ?? {};
+        profilePhoto, privacyNoticeAccepted, termsAccepted, biometricConsent, marketingConsent } = req.body ?? {};
 
     if (!adminId || typeof nombre !== 'string' || nombre.trim().length < 2 || nombre.trim().length > 120) {
         res.status(400).json({ error: 'El nombre debe tener entre 2 y 120 caracteres.' });
@@ -270,15 +271,18 @@ export const completeAdminOnboarding = async (req: AuthRequest, res: Response): 
         res.status(400).json({ error: 'La nueva contraseña debe tener entre 12 y 128 caracteres e incluir mayúscula, minúscula y número.' });
         return;
     }
-    if (!isFaceDescriptor(faceDescriptor) || privacyNoticeAccepted !== true || biometricConsent !== true) {
-        res.status(400).json({ error: 'Completa el reconocimiento facial y acepta el aviso de privacidad y el consentimiento biométrico.' });
+    if (!isFaceDescriptor(faceDescriptor) || privacyNoticeAccepted !== true || termsAccepted !== true || biometricConsent !== true) {
+        res.status(400).json({ error: 'Completa el reconocimiento facial y acepta el Aviso de Privacidad, los Términos y el consentimiento biométrico.' });
+        return;
+    }
+    if (profilePhoto !== undefined && profilePhoto !== null
+        && (typeof profilePhoto !== 'string' || !profilePhoto.startsWith('data:image/') || profilePhoto.length > 1_500_000)) {
+        res.status(400).json({ error: 'La foto de perfil no es válida o supera el tamaño permitido.' });
         return;
     }
 
     try {
         const passwordHash = await bcrypt.hash(password, 12);
-        const totpSecret = generateSecret();
-        const setupJti = randomUUID();
         const result = await pool.query(
             `UPDATE admins
              SET nombre = $2,
@@ -286,17 +290,19 @@ export const completeAdminOnboarding = async (req: AuthRequest, res: Response): 
                  empresa = COALESCE(NULLIF($4, ''), empresa),
                  password = $5,
                  face_template_encrypted = $6,
+                 profile_photo = COALESCE($7, profile_photo),
                  mfa_facial_status = TRUE,
-                 totp_secret_encrypted = $7,
-                 totp_enabled = FALSE,
-                 mfa_nonce = $8,
-                 mfa_setup_expires_at = NOW() + INTERVAL '15 minutes',
+                 first_login_required = FALSE,
+                 mfa_nonce = NULL,
+                 mfa_setup_expires_at = NULL,
                  updated_at = NOW()
              WHERE id = $1 AND first_login_required = TRUE AND account_status = 'active'
+               AND totp_enabled = TRUE AND totp_secret_encrypted IS NOT NULL
              RETURNING id, nombre, email, telefono_corporativo, empresa, profile_photo` ,
             [adminId, nombre.trim(), typeof telefono_corporativo === 'string' ? telefono_corporativo.trim() : null,
                 typeof empresa === 'string' ? empresa.trim() : '', passwordHash,
-                encryptFaceData(JSON.stringify(faceDescriptor)), encryptFaceData(totpSecret), setupJti]
+                encryptFaceData(JSON.stringify(faceDescriptor)),
+                typeof profilePhoto === 'string' ? profilePhoto : null]
         );
         if (result.rowCount !== 1) {
             res.status(403).json({ error: 'La cuenta no está disponible para activación inicial.' });
@@ -310,6 +316,7 @@ export const completeAdminOnboarding = async (req: AuthRequest, res: Response): 
         await pool.query(
             `INSERT INTO privacy_consents (admin_id, document_id, consent_type, accepted, version, ip_address, user_agent)
              VALUES ($1, $2, 'privacy_notice', TRUE, $3, $4, $5),
+                    ($1, $2, 'terms', TRUE, $3, $4, $5),
                     ($1, $2, 'biometric', TRUE, $3, $4, $5),
                     ($1, $2, 'marketing', $6, $3, $4, $5)`,
             [adminId, privacyDocumentId, PRIVACY_NOTICE_VERSION, req.ip ?? null, req.get('user-agent') ?? null, marketingConsent === true]
@@ -319,7 +326,7 @@ export const completeAdminOnboarding = async (req: AuthRequest, res: Response): 
             action: 'ADMIN_ONBOARDING_STARTED',
             resourceType: 'admin',
             resourceId: adminId,
-            details: { privacyVersion: PRIVACY_NOTICE_VERSION, marketingConsent: marketingConsent === true },
+            details: { privacyVersion: PRIVACY_NOTICE_VERSION, termsAccepted: true, marketingConsent: marketingConsent === true },
         });
         await writeAuditLog(req, {
             adminId,
@@ -328,12 +335,30 @@ export const completeAdminOnboarding = async (req: AuthRequest, res: Response): 
             resourceId: PRIVACY_NOTICE_VERSION,
             details: { version: PRIVACY_NOTICE_VERSION, stage: 'onboarding' },
         });
+        await writeAuditLog(req, {
+            adminId,
+            action: 'TERMS_ACCEPTED',
+            resourceType: 'terms',
+            resourceId: PRIVACY_NOTICE_VERSION,
+            details: { version: PRIVACY_NOTICE_VERSION, stage: 'onboarding' },
+        });
+        await writeAuditLog(req, {
+            adminId,
+            action: 'ADMIN_ONBOARDING_COMPLETED',
+            resourceType: 'admin',
+            resourceId: adminId,
+            details: { mfa: ['password', 'totp', 'face'] },
+        });
+        const identity: AdminIdentity = {
+            id: String(result.rows[0].id),
+            email: String(result.rows[0].email),
+            nombre: String(result.rows[0].nombre),
+        };
         res.json({
             success: true,
-            setupToken: signToken({ id: adminId, email: req.admin?.email ?? '', nombre: nombre.trim() }, 'setup', setupJti),
-            otpAuthUrl: generateURI({ issuer: 'SIGILIA', label: req.admin?.email ?? '', secret: totpSecret }),
-            expiresInSeconds: 900,
+            token: signToken(identity, 'access'),
             admin: result.rows[0],
+            message: 'Registro completado. Tu identidad fue validada con contraseña, OTP y reconocimiento facial.',
         });
     } catch (error) {
         console.error('Error al completar la activación inicial:', error);
@@ -421,6 +446,7 @@ export const verifyRegistrationTotp = async (req: AuthRequest, res: Response): P
             const privacyDocumentId = privacyDocument.rows[0]?.id ?? null;
             const consentValues = [
                 [admin.id, privacyDocumentId, 'privacy_notice', true, pending.privacy_notice_version ?? PRIVACY_NOTICE_VERSION],
+                [admin.id, privacyDocumentId, 'terms', true, pending.privacy_notice_version ?? PRIVACY_NOTICE_VERSION],
                 [admin.id, privacyDocumentId, 'biometric', true, pending.privacy_notice_version ?? PRIVACY_NOTICE_VERSION],
                 [admin.id, privacyDocumentId, 'marketing', pending.marketing_consent === true, pending.privacy_notice_version ?? PRIVACY_NOTICE_VERSION],
             ];
@@ -492,7 +518,7 @@ export const loginStepOne = async (req: Request, res: Response): Promise<void> =
         const result = await pool.query(
             `SELECT id, nombre, email, password, face_template_encrypted, totp_secret_encrypted,
                     totp_enabled, mfa_facial_status, mfa_locked_until, account_status,
-                    first_login_required, temporary_password_expires_at
+                    first_login_required
              FROM admins WHERE email = $1`,
             [email.trim().toLowerCase()]
         );
@@ -527,21 +553,6 @@ export const loginStepOne = async (req: Request, res: Response): Promise<void> =
         }
         if (sendLockedResponse(res, admin.mfa_locked_until)) return;
 
-        if (admin.first_login_required) {
-            if (admin.temporary_password_expires_at && new Date(admin.temporary_password_expires_at).getTime() <= Date.now()) {
-                res.status(403).json({ error: 'La contraseña temporal expiró. Solicita una nueva a soporte de SIGILIA.' });
-                return;
-            }
-            res.json({
-                success: true,
-                onboardingRequired: true,
-                onboardingToken: signToken(identityFromRow(admin), 'onboarding', randomUUID()),
-                admin: { id: admin.id, nombre: admin.nombre, email: admin.email, empresa: admin.empresa },
-                message: 'Primer acceso detectado. Completa la activación de tu cuenta para configurar una nueva contraseña y MFA.',
-            });
-            return;
-        }
-
         const identity = identityFromRow(admin);
         const mfaJti = randomUUID();
         const recorded = await writeAuditLog(req, {
@@ -552,6 +563,30 @@ export const loginStepOne = async (req: Request, res: Response): Promise<void> =
         });
         if (!recorded) {
             res.status(503).json({ error: 'No fue posible registrar el intento de acceso.' });
+            return;
+        }
+
+        if (admin.first_login_required) {
+            const totpSecret = generateSecret();
+            await pool.query(
+                `UPDATE admins
+                 SET totp_secret_encrypted = $1, totp_enabled = FALSE,
+                     mfa_nonce = $2, mfa_setup_expires_at = NOW() + INTERVAL '15 minutes',
+                     totp_last_used_step = NULL, mfa_failed_attempts = 0,
+                     mfa_locked_until = NULL
+                 WHERE id = $3 AND first_login_required = TRUE`,
+                [encryptFaceData(totpSecret), mfaJti, identity.id]
+            );
+            res.json({
+                success: true,
+                enrollmentRequired: true,
+                onboardingAfterMfa: true,
+                message: 'Credenciales verificadas. Escanea el QR con Microsoft Authenticator y confirma tu código OTP para continuar con el registro.',
+                setupToken: signToken(identity, 'setup', mfaJti),
+                otpAuthUrl: generateURI({ issuer: 'Sigilia', label: admin.email, secret: totpSecret }),
+                expiresInSeconds: 900,
+                admin: { id: admin.id, nombre: admin.nombre, email: admin.email, empresa: admin.empresa },
+            });
             return;
         }
 
@@ -610,7 +645,7 @@ export const completeMfaSetup = async (req: AuthRequest, res: Response): Promise
     try {
         const result = await pool.query(
             `SELECT id, nombre, email, totp_secret_encrypted, mfa_nonce, mfa_setup_expires_at,
-                    mfa_locked_until
+                    mfa_locked_until, first_login_required
              FROM admins WHERE id = $1`,
             [req.admin?.id]
         );
@@ -621,6 +656,7 @@ export const completeMfaSetup = async (req: AuthRequest, res: Response): Promise
             return;
         }
         if (sendLockedResponse(res, admin.mfa_locked_until)) return;
+        const onboardingRequired = Boolean(admin.first_login_required);
 
         const secret = decryptFaceData(admin.totp_secret_encrypted);
         const verification = await verify({ secret, token: otpCode });
@@ -637,7 +673,8 @@ export const completeMfaSetup = async (req: AuthRequest, res: Response): Promise
             `UPDATE admins
              SET totp_enabled = TRUE, mfa_facial_status = $3, face_template_encrypted = $4,
                  totp_last_used_step = $5, mfa_nonce = NULL, mfa_setup_expires_at = NULL,
-                 mfa_failed_attempts = 0, mfa_locked_until = NULL, first_login_required = FALSE,
+                 mfa_failed_attempts = 0, mfa_locked_until = NULL,
+                 first_login_required = CASE WHEN first_login_required THEN TRUE ELSE FALSE END,
                  temporary_password_expires_at = NULL, updated_at = NOW()
              WHERE id = $1 AND mfa_nonce = $2 AND totp_enabled = FALSE
                AND mfa_setup_expires_at > NOW()
@@ -663,6 +700,17 @@ export const completeMfaSetup = async (req: AuthRequest, res: Response): Promise
         }
 
         const identity = identityFromRow(updated.rows[0]);
+        if (onboardingRequired) {
+            res.json({
+                success: true,
+                onboardingRequired: true,
+                onboardingToken: signToken(identity, 'onboarding', randomUUID()),
+                admin: updated.rows[0],
+                message: 'OTP verificado. Completa ahora tu registro y valida tu identidad con reconocimiento facial.',
+            });
+            return;
+        }
+
         res.json({
             success: true,
             message: faceEncrypted
@@ -679,6 +727,7 @@ export const completeMfaSetup = async (req: AuthRequest, res: Response): Promise
 
 export const verifyFacialMfa = async (req: AuthRequest, res: Response): Promise<void> => {
     const submittedDescriptor: unknown = req.body?.faceDescriptor;
+    const profilePhoto: unknown = req.body?.profilePhoto;
     const admin = req.admin;
 
     if (!admin?.mfaJti) {
@@ -687,6 +736,11 @@ export const verifyFacialMfa = async (req: AuthRequest, res: Response): Promise<
     }
     if (!isFaceDescriptor(submittedDescriptor)) {
         res.status(400).json({ error: 'El descriptor facial debe contener 1024 valores numéricos válidos.' });
+        return;
+    }
+    if (profilePhoto !== undefined && profilePhoto !== null
+        && (typeof profilePhoto !== 'string' || !profilePhoto.startsWith('data:image/') || profilePhoto.length > 1_500_000)) {
+        res.status(400).json({ error: 'La foto de perfil no es válida o supera el tamaño permitido.' });
         return;
     }
 
@@ -720,6 +774,12 @@ export const verifyFacialMfa = async (req: AuthRequest, res: Response): Promise<
         if (!(await consumeMfaSession(admin.id, admin.mfaJti))) {
             res.status(401).json({ error: 'La sesión MFA ya fue usada, expiró o está bloqueada.' });
             return;
+        }
+        if (typeof profilePhoto === 'string') {
+            await pool.query(
+                'UPDATE admins SET profile_photo = $1, updated_at = NOW() WHERE id = $2',
+                [profilePhoto, admin.id]
+            );
         }
         const recorded = await writeAuditLog(req, {
             adminId: admin.id,
@@ -833,6 +893,7 @@ export const requestPasswordReset = async (req: Request, res: Response): Promise
     const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
     const genericMessage = 'Si el correo está registrado, recibirás un enlace para restablecer tu contraseña.';
     try {
+        await ensurePasswordResetSchema();
         const result = await pool.query('SELECT id, nombre, email FROM admins WHERE LOWER(email) = $1 LIMIT 1', [email]);
         const admin = result.rows[0];
         if (admin && process.env.RESEND_API_KEY) {
@@ -877,6 +938,7 @@ export const verifyPasswordResetTotp = async (req: Request, res: Response): Prom
 
     let client: PoolClient | undefined;
     try {
+        await ensurePasswordResetSchema();
         client = await pool.connect();
         await client.query('BEGIN');
         const result = await client.query(
@@ -898,9 +960,6 @@ export const verifyPasswordResetTotp = async (req: Request, res: Response): Prom
 
         const secret = decryptFaceData(admin.totp_secret_encrypted);
         const verification = await verify({ secret, token: otpCode });
-        const lastUsedStep = admin.totp_last_used_step === null
-            ? null
-            : BigInt(admin.totp_last_used_step);
         if (!verification.valid || !('timeStep' in verification)) {
             await recordPasswordResetTotpFailure(client, admin.id);
             await client.query('COMMIT');
@@ -908,12 +967,6 @@ export const verifyPasswordResetTotp = async (req: Request, res: Response): Prom
             return;
         }
         const currentStep = BigInt(verification.timeStep);
-        if (lastUsedStep !== null && currentStep <= lastUsedStep) {
-            await recordPasswordResetTotpFailure(client, admin.id);
-            await client.query('COMMIT');
-            res.status(400).json({ error: invalidCodeMessage });
-            return;
-        }
 
         const rawToken = randomBytes(32).toString('hex');
         await client.query(
@@ -963,8 +1016,10 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
         res.status(400).json({ error: 'La contraseña debe tener entre 12 y 128 caracteres, con mayúsculas, minúsculas y números.' });
         return;
     }
-    const client = await pool.connect();
+    let client: PoolClient | undefined;
     try {
+        await ensurePasswordResetSchema();
+        client = await pool.connect();
         await client.query('BEGIN');
         const tokenResult = await client.query(
             `SELECT admin_id FROM password_reset_tokens
@@ -996,10 +1051,10 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
         await client.query('COMMIT');
         res.json({ success: true, message: 'Contraseña actualizada. Ya puedes iniciar sesión.' });
     } catch (error) {
-        await client.query('ROLLBACK');
+        await client?.query('ROLLBACK');
         console.error('Password reset failed:', error);
         res.status(500).json({ error: 'No fue posible actualizar la contraseña.' });
     } finally {
-        client.release();
+        client?.release();
     }
 };

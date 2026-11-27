@@ -49,7 +49,7 @@ export default function QuoteForm({ selectedPlan }: { selectedPlan?: string }) {
         <label className={styles.field}><span>Vehículos aproximados</span><select name="fleet" defaultValue="1 a 5"><option>1 a 5</option><option>6 a 20</option><option>21 a 50</option><option>51 a 250</option><option>Más de 250</option></select></label>
         <label className={`${styles.field} ${styles.fieldFull}`}><span>Mensaje opcional</span><textarea name="message" placeholder="Cuéntanos brevemente qué necesitas monitorear." /></label>
       </div>
-      <label className={styles.consent}><input name="privacyAccepted" type="checkbox" required /><span>Acepto que SIGILIA use estos datos para responder mi solicitud de cotización. Consulta el <Link href="/legal/privacidad" target="_blank">aviso de privacidad</Link>.</span></label>
+      <label className={styles.consent}><input name="privacyAccepted" type="checkbox" required /><span>Acepto que Sigilia use estos datos para responder mi solicitud de cotización. Consulta el <Link href="/legal/privacidad" target="_blank">aviso de privacidad</Link>.</span></label>
       <button className={styles.primary} type="submit" disabled={sending}>{sending ? "Enviando solicitud..." : "Enviar solicitud de cotización"}</button>
       {sent && <p className={styles.success}>¡Solicitud enviada! Un asesor revisará tus datos y se pondrá en contacto contigo en menos de 24 horas.</p>}
       {error && <p role="alert" className={styles.error}>{error}</p>}

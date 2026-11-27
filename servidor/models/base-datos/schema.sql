@@ -133,6 +133,12 @@ UPDATE events SET status = 'resolved' WHERE status IS NULL;
 ALTER TABLE events DROP CONSTRAINT IF EXISTS events_status_check;
 ALTER TABLE events ADD CONSTRAINT events_status_check CHECK (status IN ('active', 'resolved'));
 
+CREATE INDEX IF NOT EXISTS events_driver_status_created_idx
+    ON events(driver_id, status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS gps_tracks_vehicle_timestamp_idx
+    ON gps_tracks(vehicle_id, "timestamp" DESC);
+
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
     token_hash TEXT PRIMARY KEY,
     admin_id BIGINT NOT NULL REFERENCES admins(id) ON DELETE CASCADE,

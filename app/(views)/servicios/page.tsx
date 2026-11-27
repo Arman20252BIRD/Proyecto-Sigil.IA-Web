@@ -4,7 +4,7 @@ import scrollStyles from "../components/scroll-effects.module.css";
 import styles from "../components/public-pages.module.css";
 
 export const metadata: Metadata = {
-  title: "Servicios | SIGILIA",
+  title: "Servicios | Sigilia",
   description: "Hardware, sensores y plataformas de monitoreo vehicular para operaciones empresariales.",
 };
 
@@ -33,9 +33,9 @@ export default function ServiciosPage() {
   return <main className={`${styles.page} ${scrollStyles.publicPage}`}>
     <PublicHeader />
     <section className={styles.hero}>
-      <span className={styles.kicker}>Servicios SIGILIA</span>
+      <span className={styles.kicker}>Servicios Sigilia</span>
       <h1>Un kit completo para proteger cada <span>unidad.</span></h1>
-      <p>SIGILIA reúne el kit del vehículo, la plataforma y el soporte necesario para proteger cada unidad y responder a tiempo.</p>
+      <p>Sigilia reúne el kit del vehículo, la plataforma y el soporte necesario para proteger cada unidad y responder a tiempo.</p>
       <div className={styles.heroActions}><a className={styles.primary} href="#kit">Conocer qué contiene el kit</a></div>
     </section>
     <section className={styles.section} id="kit">

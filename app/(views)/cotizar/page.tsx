@@ -5,7 +5,7 @@ import QuoteForm from "./quote-form";
 import styles from "../components/public-pages.module.css";
 import scrollStyles from "../components/scroll-effects.module.css";
 
-export const metadata: Metadata = { title: "Solicitar cotización | SIGILIA", description: "Solicita una cotización empresarial para tu flotilla." };
+export const metadata: Metadata = { title: "Solicitar cotización | Sigilia", description: "Solicita una cotización empresarial para tu flotilla." };
 
 type QuoteSearchParams = Promise<{ plan?: string | string[] }>;
 

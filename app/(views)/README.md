@@ -1,4 +1,4 @@
-# Views — interfaz de SIGILIA
+# Views — interfaz de Sigilia
 
 Esta carpeta contiene las vistas públicas y privadas de Next.js. El nombre
 `(views)` es un grupo de rutas del App Router: organiza el código sin agregar

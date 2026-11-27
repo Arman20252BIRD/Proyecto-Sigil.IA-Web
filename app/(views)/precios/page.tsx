@@ -4,7 +4,7 @@ import { PublicFooter, PublicHeader } from "../components/public-header";
 import scrollStyles from "../components/scroll-effects.module.css";
 import styles from "../components/public-pages.module.css";
 
-export const metadata: Metadata = { title: "Planes y cotización | SIGILIA", description: "Planes empresariales de protección y monitoreo por escala de operación." };
+export const metadata: Metadata = { title: "Planes y cotización | Sigilia", description: "Planes empresariales de protección y monitoreo por escala de operación." };
 
 const plans = [
   { name: "Plan PyME", audience: "Para pequeñas empresas que comienzan a profesionalizar su operación.", volume: "Hasta 25 conductores", detail: ["Kit por vehículo", "Panel web administrativo", "Panel móvil del conductor", "Alertas y consulta de eventos", "Soporte de implementación"] },
@@ -18,7 +18,7 @@ export default function PreciosPage() {
     <section className={styles.hero}>
       <span className={styles.kicker}>Inversión por escala</span>
       <h1>Elige el alcance que necesita tu <span>operación.</span></h1>
-      <p>Reduce costos por siniestros y mantenimiento preventivo con una solución dimensionada a tu flotilla. SIGILIA trabaja mediante cotización y validación empresarial.</p>
+      <p>Reduce costos por siniestros y mantenimiento preventivo con una solución dimensionada a tu flotilla. Sigilia trabaja mediante cotización y validación empresarial.</p>
       <div className={styles.heroActions}><Link className={styles.primary} href="#planes">Ver los planes</Link></div>
     </section>
     <section className={styles.section} id="planes">

@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 
-const salesEmail = 'ventas@sigilia.com.mx';
+const salesEmail = process.env.SALES_EMAIL?.trim() || 'ventas@sigilia.com.mx';
 
 function clean(value: unknown, maxLength = 300): string {
     return typeof value === 'string' ? value.trim().slice(0, maxLength) : '';
@@ -31,15 +31,16 @@ export const sendQuoteRequest = async (req: Request, res: Response): Promise<voi
         return;
     }
 
-    const apiKey = process.env.RESEND_API_KEY;
-    const from = process.env.RESEND_FROM;
-    if (!apiKey || !from) {
+    const apiKey = process.env.RESEND_QUOTE_API_KEY?.trim() || process.env.RESEND_API_KEY?.trim();
+    const from = process.env.RESEND_FROM?.trim();
+    const isVerifiedSigiliaSender = Boolean(from && /<[^>]+@sigilia\.com\.mx>|^[^\s@]+@sigilia\.com\.mx$/i.test(from));
+    if (!apiKey || !from || !isVerifiedSigiliaSender) {
         console.error('Quote email was not sent: RESEND_API_KEY or RESEND_FROM is missing.');
         res.status(503).json({ error: 'El servicio de cotizaciones no está configurado.' });
         return;
     }
 
-    const subject = `Solicitud de cotización SIGILIA - ${plan}`;
+    const subject = `Solicitud de cotización Sigilia - ${plan}`;
     const details = [
         ['Plan de interés', plan],
         ['Nombre y cargo', contact],
@@ -49,7 +50,7 @@ export const sendQuoteRequest = async (req: Request, res: Response): Promise<voi
         ['Vehículos aproximados', fleet],
         ['Mensaje', message],
     ] as const;
-    const html = `<h2>Solicitud de cotización SIGILIA</h2><p>Una empresa solicitó información comercial desde el sitio web.</p><table>${details.map(([label, value]) => `<tr><td style="padding:6px 12px 6px 0"><strong>${escapeHtml(label)}</strong></td><td style="padding:6px 0">${escapeHtml(value).replace(/\n/g, '<br>')}</td></tr>`).join('')}</table>`;
+    const html = `<h2>Solicitud de cotización Sigilia</h2><p>Una empresa solicitó información comercial desde el sitio web.</p><table>${details.map(([label, value]) => `<tr><td style="padding:6px 12px 6px 0"><strong>${escapeHtml(label)}</strong></td><td style="padding:6px 0">${escapeHtml(value).replace(/\n/g, '<br>')}</td></tr>`).join('')}</table>`;
     const text = details.map(([label, value]) => `${label}: ${value}`).join('\n');
 
     try {

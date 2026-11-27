@@ -39,9 +39,10 @@ export async function recordPrivacyNoticeAcceptance(req: Request, res: Response)
 }
 
 export async function recordCookieDecision(req: Request, res: Response): Promise<void> {
-    const { decision, preferences, version, source } = req.body ?? {};
+    const { decision, analytics, preferences, version, source } = req.body ?? {};
     const consentVersion = typeof version === 'string' && version.trim() ? version.trim() : COOKIE_POLICY_VERSION;
-    const categoryPreferences = preferences === true;
+    // `preferences` se conserva como compatibilidad con clientes anteriores.
+    const categoryAnalytics = analytics === true || preferences === true;
 
     if (!isCookieDecision(decision) || consentVersion !== COOKIE_POLICY_VERSION) {
         res.status(400).json({ error: 'La decisión de cookies no es válida.' });
@@ -62,8 +63,8 @@ export async function recordCookieDecision(req: Request, res: Response): Promise
             decision,
             categories: {
                 necessary: true,
-                preferences: categoryPreferences,
-                analytics: false,
+                services: 'on_demand',
+                analytics: categoryAnalytics,
                 advertising: false,
                 thirdPartyTracking: false,
             },

@@ -2,16 +2,18 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { QRCodeSVG } from "qrcode.react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { captureLiveFaceDescriptor, trackLiveFaceBox, type DetectedFaceBox } from "../../../servidor/models/frontend/face-recognition";
 import styles from "./page.module.css";
 
 type Tab = "login" | "register";
 type FaceState = "idle" | "camera" | "processing" | "captured";
-type Enrollment = { token: string; otpAuthUrl: string };
+type Enrollment = { token: string; otpAuthUrl: string; continueToOnboarding?: boolean };
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 const PRIVACY_NOTICE_COOKIE = "sigil_privacy_notice";
 const PRIVACY_NOTICE_COOKIE_MAX_AGE = 60 * 60 * 24 * 180;
+const ONBOARDING_TOKEN_STORAGE_KEY = "sigil_onboarding_token";
 
 type PasswordRequirements = {
   length: boolean;
@@ -41,6 +43,7 @@ type AuthResponse = {
   enrollmentRequired?: boolean;
   onboardingRequired?: boolean;
   onboardingToken?: string;
+  onboardingAfterMfa?: boolean;
   facialMfaEnabled?: boolean;
   resetToken?: string;
   admin?: { id?: string | number; email?: string; nombre?: string; empresa?: string };
@@ -69,10 +72,9 @@ export default function AuthPanel({ initialResetToken = "", initialInvitationTok
   const [verificationMode, setVerificationMode] = useState<"face" | "totp">("face");
   const [otpCode, setOtpCode] = useState("");
   const [capturedFaceDescriptor, setCapturedFaceDescriptor] = useState<number[] | null>(null);
+  const [capturedProfilePhoto, setCapturedProfilePhoto] = useState<string | null>(null);
   const [registrationPassword, setRegistrationPassword] = useState("");
   const [registrationPasswordConfirm, setRegistrationPasswordConfirm] = useState("");
-  const [privacyNoticeOpen, setPrivacyNoticeOpen] = useState(false);
-  const [privacyNoticeReady, setPrivacyNoticeReady] = useState(false);
   const [privacyNoticeAccepted, setPrivacyNoticeAccepted] = useState(false);
   const [privacyConsentStatus, setPrivacyConsentStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [detectedFaceBox, setDetectedFaceBox] = useState<DetectedFaceBox | null>(null);
@@ -83,23 +85,18 @@ export default function AuthPanel({ initialResetToken = "", initialInvitationTok
   const passwordRequirements = getPasswordRequirements(registrationPassword);
   const passwordsMatch = registrationPassword.length > 0
     && registrationPassword === registrationPasswordConfirm;
+  const isLoginView = tab === "login" || (tab === "register" && !pendingRegistration && !onboardingToken);
 
   useEffect(() => {
+    const savedOnboardingToken = window.sessionStorage.getItem(ONBOARDING_TOKEN_STORAGE_KEY);
+    if (!savedOnboardingToken) return;
+
     const timer = window.setTimeout(() => {
-      const hasAcceptedPrivacyNotice = document.cookie
-        .split(";")
-        .map((entry) => entry.trim())
-        .some((entry) => entry === `${PRIVACY_NOTICE_COOKIE}=accepted`);
-
-      if (hasAcceptedPrivacyNotice) {
-        setPrivacyNoticeAccepted(true);
-        setPrivacyConsentStatus("saved");
-        setPrivacyNoticeOpen(false);
-      } else {
-        setPrivacyNoticeOpen(true);
-      }
-
-      setPrivacyNoticeReady(true);
+      setOnboardingToken(savedOnboardingToken);
+      setPrivacyNoticeAccepted(false);
+      setPrivacyConsentStatus("idle");
+      setTab("register");
+      setLoginStep(1);
     }, 0);
 
     return () => window.clearTimeout(timer);
@@ -117,6 +114,24 @@ export default function AuthPanel({ initialResetToken = "", initialInvitationTok
     if (videoRef.current) videoRef.current.srcObject = null;
     setDetectedFaceBox(null);
     setFaceState("idle");
+  }
+
+  function captureProfilePhoto(): string | null {
+    const video = videoRef.current;
+    if (!video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !video.videoWidth || !video.videoHeight) {
+      return null;
+    }
+
+    const maxWidth = 480;
+    const scale = Math.min(1, maxWidth / video.videoWidth);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+    canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+    const context = canvas.getContext("2d");
+    if (!context) return null;
+
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/jpeg", 0.82);
   }
 
   async function handlePrivacyNoticeChange(accepted: boolean) {
@@ -149,6 +164,7 @@ export default function AuthPanel({ initialResetToken = "", initialInvitationTok
     cameraStartingRef.current = true;
     setNotice("");
     setCapturedFaceDescriptor(null);
+    setCapturedProfilePhoto(null);
     setDetectedFaceBox(null);
     if (!navigator.mediaDevices?.getUserMedia) {
       cameraStartingRef.current = false;
@@ -267,6 +283,9 @@ export default function AuthPanel({ initialResetToken = "", initialInvitationTok
       setOtpCode("");
       if (result.onboardingRequired && result.onboardingToken) {
         setOnboardingToken(result.onboardingToken);
+        setPrivacyNoticeAccepted(false);
+        setPrivacyConsentStatus("idle");
+        window.sessionStorage.setItem(ONBOARDING_TOKEN_STORAGE_KEY, result.onboardingToken);
         setOnboardingEmail(String(result.admin?.email ?? formData.get("email") ?? ""));
         setTab("register");
         setLoginStep(1);
@@ -274,7 +293,11 @@ export default function AuthPanel({ initialResetToken = "", initialInvitationTok
         setMfaToken("");
         setNotice(result.message ?? "Completa la activación inicial de tu cuenta.");
       } else if (result.enrollmentRequired && result.setupToken && result.otpAuthUrl) {
-        setSetupEnrollment({ token: result.setupToken, otpAuthUrl: result.otpAuthUrl });
+        setSetupEnrollment({
+          token: result.setupToken,
+          otpAuthUrl: result.otpAuthUrl,
+          continueToOnboarding: Boolean(result.onboardingAfterMfa),
+        });
         setMfaToken("");
         setFacialMfaEnabled(false);
         setNotice(result.message ?? "Configura tu aplicación autenticadora para continuar.");
@@ -283,7 +306,7 @@ export default function AuthPanel({ initialResetToken = "", initialInvitationTok
         setMfaToken(result.mfaToken);
         setFacialMfaEnabled(Boolean(result.facialMfaEnabled));
         setVerificationMode(result.facialMfaEnabled ? "face" : "totp");
-        setNotice(result.message ?? "Credenciales verificadas. Completa el segundo factor.");
+        setNotice("");
       } else {
         setNotice("La respuesta de autenticación no contiene un segundo factor válido.");
       }
@@ -311,7 +334,9 @@ export default function AuthPanel({ initialResetToken = "", initialInvitationTok
         return;
       }
       setResetToken(result.resetToken);
-      setNotice(result.message ?? "Código verificado. Ahora puedes crear una nueva contraseña.");
+      setLoginStep(1);
+      setForgotPassword(true);
+      setNotice("");
     } catch {
       setNotice("No fue posible conectar con el backend. Verifica que el servidor esté activo.");
     } finally {
@@ -349,7 +374,9 @@ export default function AuthPanel({ initialResetToken = "", initialInvitationTok
       window.history.replaceState({}, "", "/login");
       setResetToken("");
       setForgotPassword(false);
-      setNotice(result.message ?? "Contraseña actualizada. Ya puedes iniciar sesión.");
+      setLoginStep(1);
+      setMfaToken("");
+      window.location.replace("/login");
     } catch {
       setNotice("No fue posible conectar con el backend. Verifica que el servidor esté activo.");
     } finally {
@@ -362,6 +389,9 @@ export default function AuthPanel({ initialResetToken = "", initialInvitationTok
     setNotice("");
     const form = event.currentTarget;
     const formData = new FormData(form);
+    const activeOnboardingToken = onboardingToken
+      || window.sessionStorage.getItem(ONBOARDING_TOKEN_STORAGE_KEY)
+      || "";
     const password = String(formData.get("password") ?? "");
     const name = String(formData.get("name") ?? "").trim();
     const email = (onboardingEmail || String(formData.get("email") ?? "")).trim();
@@ -374,8 +404,8 @@ export default function AuthPanel({ initialResetToken = "", initialInvitationTok
       setNotice("Escribe un correo electrónico válido.");
       return;
     }
-    if (!onboardingToken && !invitationToken) {
-      setNotice("Pega el código de invitación enviado por soporte de SIGILIA.");
+    if (!activeOnboardingToken && !invitationToken) {
+      setNotice("Pega el código de invitación enviado por soporte de Sigilia.");
       return;
     }
     const requirements = getPasswordRequirements(password);
@@ -387,12 +417,12 @@ export default function AuthPanel({ initialResetToken = "", initialInvitationTok
       setNotice("Las contraseñas no coinciden.");
       return;
     }
-    if (formData.get("biometricConsent") !== "on") {
-      setNotice("Debes aceptar el uso de una plantilla facial cifrada para activar este factor.");
-      return;
-    }
     if (formData.get("privacyNoticeAccepted") !== "on") {
       setNotice("Debes leer y aceptar el Aviso de privacidad para crear la cuenta.");
+      return;
+    }
+    if (privacyConsentStatus !== "saved") {
+      setNotice("Espera a que se confirme el registro del Aviso de privacidad.");
       return;
     }
 
@@ -401,41 +431,53 @@ export default function AuthPanel({ initialResetToken = "", initialInvitationTok
 
     setIsSubmitting(true);
     try {
-      const response = await fetch(`${API_URL}${onboardingToken ? "/api/auth/onboarding/complete" : "/api/auth/register"}`, {
+      const response = await fetch(`${API_URL}${activeOnboardingToken ? "/api/auth/onboarding/complete" : "/api/auth/register"}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        ...(onboardingToken ? { Authorization: `Bearer ${onboardingToken}` } : {}),
+        headers: {
+          "Content-Type": "application/json",
+          ...(activeOnboardingToken ? { Authorization: `Bearer ${activeOnboardingToken}` } : {}),
+        },
         body: JSON.stringify({
           nombre: name,
           empresa: formData.get("company"),
           email: onboardingEmail || email,
-          ...(onboardingToken ? {} : { invitationToken }),
+          ...(activeOnboardingToken ? {} : { invitationToken }),
           telefono_corporativo: formData.get("phone"),
           password,
           faceDescriptor,
+          profilePhoto: capturedProfilePhoto,
           privacyNoticeAccepted: true,
+          termsAccepted: true,
           biometricConsent: true,
           marketingConsent: formData.get("marketingConsent") === "on",
         }),
       });
       const result: AuthResponse = await response.json();
-      if (!response.ok || !result.success || !(onboardingToken ? result.setupToken : result.enrollmentToken) || !result.otpAuthUrl) {
-        setNotice(result.error ?? "No fue posible iniciar el enrolamiento.");
-        return;
-      }
-
-      if (onboardingToken) {
-        setSetupEnrollment({ token: result.setupToken!, otpAuthUrl: result.otpAuthUrl });
+      if (activeOnboardingToken) {
         setOnboardingToken("");
-        setTab("login");
-        setLoginStep(2);
+        if (!response.ok || !result.success || !result.token) {
+          setNotice(result.error ?? "No fue posible completar el registro.");
+          return;
+        }
+        setCapturedFaceDescriptor(null);
+        setCapturedProfilePhoto(null);
+        stopCamera();
+        setOtpCode("");
+        form.reset();
+        window.sessionStorage.removeItem(ONBOARDING_TOKEN_STORAGE_KEY);
+        finishAuthenticationResult(result);
       } else {
-        setPendingRegistration({ token: result.enrollmentToken!, otpAuthUrl: result.otpAuthUrl });
+        if (!response.ok || !result.success || !result.enrollmentToken || !result.otpAuthUrl) {
+          setNotice(result.error ?? "No fue posible iniciar el enrolamiento.");
+          return;
+        }
+        setPendingRegistration({ token: result.enrollmentToken, otpAuthUrl: result.otpAuthUrl });
+        setCapturedFaceDescriptor(null);
+        setCapturedProfilePhoto(null);
+        stopCamera();
+        setOtpCode("");
+        form.reset();
       }
-      setCapturedFaceDescriptor(null);
-      stopCamera();
-      setOtpCode("");
-      form.reset();
       setNotice(result.message ?? "Escanea el código con tu aplicación autenticadora.");
     } catch {
       setNotice("No fue posible conectar con el backend para crear la cuenta.");
@@ -447,7 +489,7 @@ export default function AuthPanel({ initialResetToken = "", initialInvitationTok
   async function validateInvitation() {
     const token = invitationInput.trim();
     if (!token) {
-      setNotice("Pega el código de invitación enviado por soporte de SIGILIA.");
+      setNotice("Pega el código de invitación enviado por soporte de Sigilia.");
       return;
     }
     setIsSubmitting(true);
@@ -491,7 +533,26 @@ export default function AuthPanel({ initialResetToken = "", initialInvitationTok
           ...(capturedFaceDescriptor ? { faceDescriptor: capturedFaceDescriptor } : {}),
         }),
       });
-      await finishAuthentication(response);
+      const result: AuthResponse = await response.json();
+      if (!response.ok || !result.success) {
+        setNotice(result.error ?? "La verificaciÃ³n OTP no fue aceptada.");
+        return;
+      }
+      if (result.onboardingRequired && result.onboardingToken) {
+        setOnboardingToken(result.onboardingToken);
+        setPrivacyNoticeAccepted(false);
+        setPrivacyConsentStatus("idle");
+        window.sessionStorage.setItem(ONBOARDING_TOKEN_STORAGE_KEY, result.onboardingToken);
+        setOnboardingEmail(String(result.admin?.email ?? ""));
+        setSetupEnrollment(null);
+        setCapturedFaceDescriptor(null);
+        setOtpCode("");
+        setTab("register");
+        setLoginStep(1);
+        setNotice(result.message ?? "OTP verificado. Completa tu registro y valida tu identidad con reconocimiento facial.");
+        return;
+      }
+      finishAuthenticationResult(result);
     } catch {
       setNotice("No fue posible conectar con el backend para configurar MFA.");
     } finally {
@@ -546,6 +607,10 @@ export default function AuthPanel({ initialResetToken = "", initialInvitationTok
       setNotice("Inicia sesión con correo y contraseña antes de verificar el rostro.");
       return;
     }
+    // Capturamos la imagen mientras la cámara sigue activa. El descriptor se
+    // usa para validar la identidad; la imagen independiente se usa solo como
+    // foto visible del perfil en el dashboard.
+    const liveProfilePhoto = captureProfilePhoto();
     const faceDescriptor = await captureFace();
     if (!faceDescriptor) return;
 
@@ -558,7 +623,7 @@ export default function AuthPanel({ initialResetToken = "", initialInvitationTok
           "Content-Type": "application/json",
           Authorization: `Bearer ${mfaToken}`,
         },
-        body: JSON.stringify({ faceDescriptor }),
+        body: JSON.stringify({ faceDescriptor, profilePhoto: liveProfilePhoto ?? captureProfilePhoto() }),
       });
       await finishAuthentication(response);
     } catch {
@@ -569,13 +634,26 @@ export default function AuthPanel({ initialResetToken = "", initialInvitationTok
   }
 
   async function captureEnrollmentFace() {
+    const liveProfilePhoto = captureProfilePhoto();
     const descriptor = await captureFace();
     if (descriptor) {
       setCapturedFaceDescriptor(descriptor);
+      setCapturedProfilePhoto(liveProfilePhoto ?? captureProfilePhoto());
       stopCamera();
       setFaceState("captured");
       setNotice("Rostro enrolado en esta sesión. Confirma la configuración con tu código autenticador.");
     }
+  }
+
+  function finishAuthenticationResult(result: AuthResponse) {
+    if (!result.success || !result.token) {
+      setNotice(result.error ?? "La verificaciÃ³n no fue aceptada.");
+      return;
+    }
+
+    window.sessionStorage.setItem("sigil_access_token", result.token);
+    stopCamera();
+    window.location.replace("/dashboard");
   }
 
   async function finishAuthentication(response: Response) {
@@ -592,14 +670,17 @@ export default function AuthPanel({ initialResetToken = "", initialInvitationTok
 
   function resetLogin() {
     stopCamera();
+    setTab("login");
     setLoginStep(1);
     setCapturedFaceDescriptor(null);
+    setCapturedProfilePhoto(null);
     setMfaToken("");
     setSetupEnrollment(null);
     setOtpCode("");
     setRegistrationPassword("");
     setRegistrationPasswordConfirm("");
     setOnboardingToken("");
+    window.sessionStorage.removeItem(ONBOARDING_TOKEN_STORAGE_KEY);
     setOnboardingEmail("");
     setNotice("");
   }
@@ -611,6 +692,7 @@ export default function AuthPanel({ initialResetToken = "", initialInvitationTok
     setResetToken("");
     setLoginStep(1);
     setCapturedFaceDescriptor(null);
+    setCapturedProfilePhoto(null);
     setPendingRegistration(null);
     setSetupEnrollment(null);
     setMfaToken("");
@@ -618,13 +700,23 @@ export default function AuthPanel({ initialResetToken = "", initialInvitationTok
     setRegistrationPassword("");
     setRegistrationPasswordConfirm("");
     setOnboardingToken("");
+    window.sessionStorage.removeItem(ONBOARDING_TOKEN_STORAGE_KEY);
     setOnboardingEmail("");
     setNotice("");
   }
 
   return (
     <section className={styles.panel}>
-      {tab === "login" && loginStep === 1 && resetToken && (
+      <div className={styles.loginBanner}>
+        <Image
+          src="/login/banner.jpg"
+          alt="Espacio de trabajo para acceder al portal administrativo Sigilia"
+          fill
+          priority
+          sizes="(max-width: 850px) 100vw, 58vw"
+        />
+      </div>
+      {isLoginView && loginStep === 1 && resetToken && (
         <form className={styles.form} onSubmit={submitPasswordReset}>
           <FormHeader step="RESTABLECER CONTRASEÑA" title="Crea una nueva contraseña" text="Elige una contraseña segura para volver a acceder a tu cuenta." />
           <Field label="Nueva contraseña" name="password" type="password" placeholder="Mínimo 12 caracteres" autoComplete="new-password" />
@@ -638,7 +730,7 @@ export default function AuthPanel({ initialResetToken = "", initialInvitationTok
         </form>
       )}
 
-      {tab === "login" && loginStep === 1 && forgotPassword && !resetToken && (
+      {isLoginView && loginStep === 1 && forgotPassword && !resetToken && (
         <form className={styles.form} onSubmit={submitPasswordResetRequest}>
           <FormHeader step="RECUPERAR CONTRASEÑA" title="Verifica tu aplicación autenticadora" text="Ingresa el correo de tu cuenta y el código vigente de seis dígitos de tu aplicación." />
           <Field label="Correo corporativo" name="email" type="email" placeholder="admin@empresa.com" autoComplete="username" />
@@ -652,22 +744,22 @@ export default function AuthPanel({ initialResetToken = "", initialInvitationTok
         </form>
       )}
 
-      {tab === "login" && loginStep === 1 && !forgotPassword && !resetToken && (
+      {isLoginView && loginStep === 1 && !forgotPassword && !resetToken && (
         <form className={styles.form} onSubmit={submitLogin}>
-          <FormHeader step="01 / CREDENCIALES" title="Acceso de administrador" text="Usa el correo corporativo registrado y tu contraseña." />
+          <FormHeader step="" title="Bienvenido" text="Ingresa tu correo y contraseña." />
           <Field label="Correo corporativo" name="email" type="email" placeholder="admin@empresa.com" />
           <Field label="Contraseña" name="password" type="password" placeholder="Tu contraseña" />
           <button className={styles.primaryButton} type="submit" disabled={isSubmitting}>
-            {isSubmitting ? "Validando..." : "Continuar con MFA"} <span>→</span>
+            {isSubmitting ? "Validando..." : "Iniciar sesión"} <span>→</span>
           </button>
           <button type="button" className="forgotPassword" onClick={() => { setForgotPassword(true); setNotice(""); }}>¿Olvidaste tu contraseña?</button>
         </form>
       )}
 
-      {tab === "login" && loginStep === 2 && setupEnrollment && (
+      {isLoginView && loginStep === 2 && setupEnrollment && (
         <MfaSetup
-          title="Activa la autenticación multifactor"
-          description="Escanea el QR con una aplicación autenticadora. Puedes activar reconocimiento facial ahora o usar TOTP como factor MFA."
+          title="Configura tu código OTP"
+          description="Escanea el código QR con Microsoft Authenticator. Después usa el código de 6 dígitos para iniciar sesión."
           otpAuthUrl={setupEnrollment.otpAuthUrl}
           videoRef={videoRef}
           faceState={faceState}
@@ -680,12 +772,18 @@ export default function AuthPanel({ initialResetToken = "", initialInvitationTok
           onConfirm={completeMfaSetup}
           isSubmitting={isSubmitting}
           onBack={resetLogin}
+          allowFaceEnrollment={!setupEnrollment.continueToOnboarding}
         />
       )}
 
-      {tab === "login" && loginStep === 2 && !setupEnrollment && (
+      {isLoginView && loginStep === 2 && !setupEnrollment && (
         <div className={styles.form}>
-          <FormHeader step="02 / SEGUNDO FACTOR" title="Confirma tu identidad" text="Verifica el rostro o introduce el código temporal de tu aplicación autenticadora." />
+          <FormHeader
+            title="Verifica con MFA"
+            text={facialMfaEnabled
+              ? "Elige reconocimiento facial o código OTP de Microsoft Authenticator."
+              : "Introduce el código OTP de seis dígitos de Microsoft Authenticator."}
+          />
           {facialMfaEnabled && verificationMode === "face" ? (
             <>
               <CameraFrame videoRef={videoRef} faceState={faceState} faceBox={detectedFaceBox} />
@@ -712,7 +810,7 @@ export default function AuthPanel({ initialResetToken = "", initialInvitationTok
                 </button>
               )}
               <label className={styles.field}>
-                <span>Código de 6 dígitos</span>
+                <span>Código de Microsoft Authenticator</span>
                 <input
                   inputMode="numeric"
                   autoComplete="one-time-code"
@@ -738,7 +836,7 @@ export default function AuthPanel({ initialResetToken = "", initialInvitationTok
       {tab === "register" && pendingRegistration && (
         <MfaSetup
           title="Confirma tu aplicación autenticadora"
-          description="Escanea el QR y confirma el código de seis dígitos. Tu plantilla facial ya está cifrada y no se guardó ninguna fotografía."
+          description="Escanea el QR y confirma el código de seis dígitos. La plantilla facial se guarda cifrada y la captura se conserva únicamente como foto de perfil."
           otpAuthUrl={pendingRegistration.otpAuthUrl}
           videoRef={videoRef}
           faceState={faceState}
@@ -751,29 +849,13 @@ export default function AuthPanel({ initialResetToken = "", initialInvitationTok
           onConfirm={verifyRegistrationTotp}
           isSubmitting={isSubmitting}
           onBack={() => { setPendingRegistration(null); setOtpCode(""); setNotice(""); }}
+          allowFaceEnrollment={false}
         />
-      )}
-
-      {tab === "register" && !pendingRegistration && !onboardingToken && (
-        <div className={styles.form}>
-          <FormHeader
-            step="ACCESO RESTRINGIDO"
-            title="Activa tu cuenta autorizada"
-            text="Esta plataforma es exclusiva para administradores autorizados por SIGILIA."
-          />
-          <p className={styles.notice}>
-            Soporte de SIGILIA debe crear previamente tu cuenta y enviarte un correo corporativo con una contraseña temporal.
-            Regresa a “Iniciar sesión” y utiliza esas credenciales para comenzar la activación.
-          </p>
-          <button type="button" className={styles.primaryButton} onClick={() => changeTab("login")}>
-            Volver a iniciar sesión <span>→</span>
-          </button>
-        </div>
       )}
 
       {tab === "register" && !pendingRegistration && onboardingToken && (
         <form className={styles.form} onSubmit={submitRegister}>
-          <FormHeader step="PRIMER ACCESO" title="Completa tu registro corporativo" text="Cambia tu contraseña temporal, registra tus datos y configura MFA para entrar al dashboard." />
+          <FormHeader step="PRIMER ACCESO" title="Completa tu registro corporativo" text="Establece tu contraseña, registra tus datos y configura MFA para entrar al dashboard." />
           <div className={styles.fieldGrid}>
             <Field label="Nombre completo" name="name" placeholder="Nombre y apellidos" />
             <Field label="Empresa" name="company" placeholder="Nombre de la empresa" />
@@ -815,15 +897,13 @@ export default function AuthPanel({ initialResetToken = "", initialInvitationTok
           />
           <label className={styles.consent}>
             <input type="checkbox" name="privacyNoticeAccepted" required checked={privacyNoticeAccepted} onChange={(event) => void handlePrivacyNoticeChange(event.target.checked)} />
-            <span>He leído y acepto el <a href="/legal/privacidad" target="_blank" rel="noreferrer">Aviso de privacidad</a> (versión 1.0).</span>
+            <span>He leído y acepto el <a href="/legal/privacidad" target="_blank" rel="noreferrer">Aviso de Privacidad</a> y los <a href="/legal/terminos" target="_blank" rel="noreferrer">Términos y Condiciones</a>.</span>
           </label>
-          <label className={styles.consent}>
-            <input type="checkbox" name="biometricConsent" required />
-            <span>Consiento que se procese mi plantilla facial para autenticación MFA. No se almacenará la fotografía.</span>
-          </label>
+          {privacyConsentStatus === "saving" && <p className={styles.privacyConsentStatus} role="status">Registrando la aceptación...</p>}
+          {privacyConsentStatus === "error" && <p className={styles.privacyConsentError} role="alert">No fue posible registrar la aceptación. Inténtalo nuevamente.</p>}
           <label className={styles.consent}>
             <input type="checkbox" name="marketingConsent" />
-            <span>Acepto recibir comunicados opcionales sobre mejoras y encuestas de SIGILIA.</span>
+            <span>Acepto recibir comunicados opcionales sobre mejoras y encuestas de Sigilia.</span>
           </label>
           <button className={styles.primaryButton} type="submit" disabled={isSubmitting || faceState === "processing"}>
             {isSubmitting ? "Activando..." : "Activar cuenta autorizada"} <span>→</span>
@@ -832,28 +912,12 @@ export default function AuthPanel({ initialResetToken = "", initialInvitationTok
       )}
 
       {notice && <p className={styles.notice} role="status">{notice}</p>}
-      {privacyNoticeReady && privacyNoticeOpen && (
-        <div className={styles.privacyOverlay} role="presentation">
-          <section className={styles.privacyModal} role="dialog" aria-modal="true" aria-labelledby="privacy-title">
-            <span className={styles.kicker}>INFORMACIÓN LEGAL · VERSIÓN 1.0</span>
-            <h2 id="privacy-title">Aviso de privacidad</h2>
-            <p>Antes de crear una cuenta, revisa cómo SIGILIA trata tus datos personales, la plantilla facial, la telemetría y los registros de seguridad.</p>
-            <div className={styles.privacySummary}><span><b>Datos tratados</b> Identificación, contacto, autenticación, GPS, eventos y datos técnicos.</span><span><b>Biometría</b> El descriptor facial se procesa para MFA y se almacena cifrado; no se guarda la fotografía.</span><span><b>Tus derechos</b> Puedes solicitar acceso, rectificación, cancelación u oposición mediante ARCO.</span></div>
-            <label className={styles.privacyAcceptance}><input type="checkbox" checked={privacyNoticeAccepted} onChange={(event) => void handlePrivacyNoticeChange(event.target.checked)} /><span>Acepto el Aviso de privacidad y el tratamiento de mis datos conforme a la versión 1.0.</span></label>
-            {privacyConsentStatus === "saving" && <p className={styles.privacyConsentStatus} role="status">Registrando tu aceptación...</p>}
-            {privacyConsentStatus === "saved" && <p className={styles.privacyConsentStatus} role="status">Aceptación registrada correctamente.</p>}
-            {privacyConsentStatus === "error" && <p className={styles.privacyConsentError} role="alert">No fue posible registrar la aceptación. Verifica que el backend esté activo e inténtalo nuevamente.</p>}
-            <div className={styles.privacyModalActions}><a className={styles.secondaryButton} href="/legal/privacidad" target="_blank" rel="noreferrer">Leer aviso completo</a><a className={styles.textButton} href="/legal/arco" target="_blank" rel="noreferrer">Ver solicitud ARCO</a><button type="button" className={styles.rejectButton} onClick={() => router.replace("/informativo")}>Rechazar</button><button type="button" className={styles.primaryButton} disabled={!privacyNoticeAccepted || privacyConsentStatus !== "saved"} onClick={() => setPrivacyNoticeOpen(false)}>Aceptar</button></div>
-          </section>
-        </div>
-      )}
-      <p className={styles.panelFoot}>El acceso está restringido a administradores autorizados. SIGILIA crea previamente la cuenta y envía las credenciales corporativas; en el primer acceso se solicita cambiar la contraseña y configurar MFA.</p>
     </section>
   );
 }
 
-function FormHeader({ step, title, text }: { step: string; title: string; text: string }) {
-  return <div className={styles.formHeader}><span>{step}</span><h2>{title}</h2><p>{text}</p></div>;
+function FormHeader({ step, title, text }: { step?: string; title: string; text: string }) {
+  return <div className={styles.formHeader}>{step && <span>{step}</span>}<h2>{title}</h2><p>{text}</p></div>;
 }
 
 function Field({
@@ -992,7 +1056,7 @@ function FaceEnroll({
 }) {
   return (
     <div className={styles.faceBox}>
-      <div className={styles.faceHeader}><div><span>02 / ENROLAMIENTO FACIAL</span><h3>Reconocimiento facial</h3></div><b>LOCAL</b></div>
+      <div className={styles.faceHeader}><div><span>02 / ENROLAMIENTO FACIAL</span><h3>Reconocimiento facial</h3></div></div>
       <CameraFrame videoRef={videoRef} faceState={captured ? "captured" : faceState} faceBox={faceBox} />
       <div className={styles.faceActions}>
         {faceState === "idle" || faceState === "captured" ? (
@@ -1002,7 +1066,7 @@ function FaceEnroll({
             {faceState === "processing" ? "Analizando…" : captured ? "Capturar de nuevo" : "Capturar rostro"}
           </button>
         )}
-        <small>Mantén el rostro centrado. Solo se envía el descriptor facial; no se suben imágenes.</small>
+        <small>Mantén el rostro centrado. Se guarda una foto de perfil separada del descriptor facial cifrado.</small>
       </div>
     </div>
   );
@@ -1023,6 +1087,7 @@ function MfaSetup({
   onConfirm,
   isSubmitting,
   onBack,
+  allowFaceEnrollment,
 }: {
   title: string;
   description: string;
@@ -1038,6 +1103,7 @@ function MfaSetup({
   onConfirm: () => void;
   isSubmitting: boolean;
   onBack: () => void;
+  allowFaceEnrollment: boolean;
 }) {
   return (
     <div className={styles.form}>
@@ -1046,7 +1112,7 @@ function MfaSetup({
         <QRCodeSVG value={otpAuthUrl} size={168} includeMargin aria-label="Código QR de la aplicación autenticadora" />
         <small>Guarda la cuenta en una aplicación TOTP antes de continuar. No compartas este QR.</small>
       </div>
-      {!faceCaptured && (
+      {allowFaceEnrollment && !faceCaptured && (
         <div className={styles.faceBox}>
           <div className={styles.faceHeader}><div><span>OPCIONAL</span><h3>Enrolar reconocimiento facial</h3></div><b>PRIVADO</b></div>
           <CameraFrame videoRef={videoRef} faceState={faceState} faceBox={faceBox} />
@@ -1062,9 +1128,9 @@ function MfaSetup({
           </div>
         </div>
       )}
-      {faceCaptured && <p className={styles.mfaStatus}><i /> Plantilla facial preparada y cifrada al confirmar.</p>}
+      {allowFaceEnrollment && faceCaptured && <p className={styles.mfaStatus}><i /> Plantilla facial preparada y cifrada al confirmar.</p>}
       <label className={styles.field}>
-        <span>Código de 6 dígitos</span>
+        <span>Código de Microsoft Authenticator (6 dígitos)</span>
         <input
           inputMode="numeric"
           autoComplete="one-time-code"

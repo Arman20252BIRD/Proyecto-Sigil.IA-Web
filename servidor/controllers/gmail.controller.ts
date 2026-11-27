@@ -16,7 +16,7 @@ type ArcoAttachment = { filename: string; mimeType: string; dataBase64: string }
 type ArcoRequest = {
     nombre: string;
     contacto: string;
-    derecho: string;
+    derechos: string[];
     solicitudHtml: string;
     solicitudText: string;
     attachments: ArcoAttachment[];
@@ -40,8 +40,16 @@ function isEmail(value: unknown): value is string {
     return typeof value === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
 }
 
-function isArcoRight(value: unknown): value is string {
-    return typeof value === 'string' && ARCO_RIGHTS.has(value.trim().toLowerCase());
+function parseArcoRights(value: unknown): string[] {
+    const values = Array.isArray(value) ? value : typeof value === 'string' ? [value] : [];
+    return [...new Set(values
+        .filter((item): item is string => typeof item === 'string')
+        .map((item) => item.trim().toLowerCase())
+        .filter((item) => ARCO_RIGHTS.has(item)))];
+}
+
+function rightLabel(value: string): string {
+    return ({ acceso: 'Acceso', rectificacion: 'Rectificación', cancelacion: 'Cancelación' }[value] ?? value);
 }
 
 function safeMimeHeaderValue(value: string): string {
@@ -135,10 +143,11 @@ export function authorizeArcoWithGmail(req: Request, res: Response): void {
         res.status(503).json({ error: 'La integración de Gmail no está configurada en el backend.' });
         return;
     }
-    const { nombre, contacto, derecho, solicitudHtml, solicitudText } = req.body ?? {};
+    const { nombre, contacto, solicitudHtml, solicitudText } = req.body ?? {};
+    const derechos = parseArcoRights(req.body?.derechos ?? req.body?.derecho);
     const parsedAttachments = parseAttachments(req.body?.attachments);
     if (typeof nombre !== 'string' || nombre.trim().length < 2 || !isEmail(contacto)
-        || !isArcoRight(derecho) || typeof solicitudHtml !== 'string' || typeof solicitudText !== 'string'
+        || derechos.length === 0 || typeof solicitudHtml !== 'string' || typeof solicitudText !== 'string'
         || !solicitudText.trim() || parsedAttachments.error) {
         res.status(400).json({ error: parsedAttachments.error ?? 'Completa los datos de la solicitud ARCO antes de continuar con Gmail.' });
         return;
@@ -148,7 +157,7 @@ export function authorizeArcoWithGmail(req: Request, res: Response): void {
     const draft: ArcoRequest = {
         nombre: nombre.trim().slice(0, 160),
         contacto: contacto.trim().toLowerCase(),
-        derecho: safeMimeHeaderValue(derecho.trim().toLowerCase()).slice(0, 40),
+        derechos: derechos.map((right) => safeMimeHeaderValue(right).slice(0, 40)),
         solicitudHtml: cleanHtml(solicitudHtml).slice(0, 12000),
         solicitudText: solicitudText.trim().slice(0, 5000),
         attachments: parsedAttachments.attachments ?? [],
@@ -174,10 +183,11 @@ function encodeMimeMessage(payload: ArcoRequest): string {
     const alternativeBoundary = `sigil-alt-${crypto.randomUUID()}`;
     const safeNombre = escapeHtml(safeMimeHeaderValue(payload.nombre));
     const safeContacto = escapeHtml(safeMimeHeaderValue(payload.contacto));
-    const safeDerecho = safeMimeHeaderValue(payload.derecho);
+    const safeDerechos = payload.derechos.map(rightLabel).map(safeMimeHeaderValue);
+    const rightsText = safeDerechos.join(', ');
     const lines = [
         `To: ${CONTACT_EMAIL}`,
-        `Subject: Solicitud de derecho ARCO - ${safeDerecho}`,
+        `Subject: Solicitud de derechos ARCO - ${rightsText}`,
         `Content-Type: multipart/mixed; boundary="${mixedBoundary}"`,
         'MIME-Version: 1.0', '',
         `--${mixedBoundary}`,
@@ -186,11 +196,11 @@ function encodeMimeMessage(payload: ArcoRequest): string {
         'Content-Type: text/plain; charset="UTF-8"', '',
         `Nombre completo: ${safeNombre}`,
         `Correo de contacto: ${safeContacto}`,
-        `Derecho solicitado: ${safeDerecho}`, '',
+        `Derechos solicitados: ${rightsText}`, '',
         'Descripción de la solicitud:', payload.solicitudText, '',
         `--${alternativeBoundary}`,
         'Content-Type: text/html; charset="UTF-8"', '',
-        `<p><strong>Nombre completo:</strong> ${safeNombre}</p><p><strong>Correo de contacto:</strong> <a href="mailto:${safeContacto}">${safeContacto}</a></p><p><strong>Derecho solicitado:</strong> ${safeDerecho}</p><p><strong>Descripción de la solicitud:</strong></p>${payload.solicitudHtml}`,
+        `<p><strong>Nombre completo:</strong> ${safeNombre}</p><p><strong>Correo de contacto:</strong> <a href="mailto:${safeContacto}">${safeContacto}</a></p><p><strong>Derechos solicitados:</strong> ${rightsText}</p><p><strong>Descripción de la solicitud:</strong></p>${payload.solicitudHtml}`,
         `--${alternativeBoundary}--`,
     ];
     for (const attachment of payload.attachments) {

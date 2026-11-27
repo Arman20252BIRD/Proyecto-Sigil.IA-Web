@@ -1,11 +1,29 @@
 
 import { Request, Response } from 'express';
+import { randomInt } from 'node:crypto';
 import { pool } from '../models/db';
 import type { AuthRequest } from '../middleware/auth.middleware';
 import { insertAuditLog } from '../models/audit-log.model';
 
 const operationalStatuses = new Set(['Activo', 'Inactivo']);
 const driverFields = new Set(['nombre', 'email', 'telefono', 'estatus_operativo', 'vehicle_id']);
+const simulatedEventTemplates = [
+    {
+        eventType: 'cristalazo_parabrisas',
+        severity: 'critical',
+        message: 'Se detectó un posible impacto o ruptura del parabrisas de la unidad.',
+    },
+    {
+        eventType: 'forcejeo_chapa',
+        severity: 'warning',
+        message: 'Se detectaron intentos repetidos de forcejeo en la chapa o cerradura.',
+    },
+    {
+        eventType: 'traslado_no_autorizado',
+        severity: 'critical',
+        message: 'La unidad presenta movimiento no autorizado fuera del patrón operativo.',
+    },
+] as const;
 
 type DriverInput = {
     nombre?: string;
@@ -128,6 +146,15 @@ export const createDriver = async (req: AuthRequest, res: Response): Promise<voi
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
+        const driverCount = await client.query<{ count: number }>(
+            'SELECT COUNT(*)::int AS count FROM drivers WHERE admin_id = $1',
+            [adminId],
+        );
+        const shouldSeedDemoMonitoring = process.env.ENABLE_DRIVER_DEMO_ALERT !== 'false'
+            && Number(driverCount.rows[0]?.count ?? 0) % 2 === 0;
+        const simulatedEvent = shouldSeedDemoMonitoring
+            ? simulatedEventTemplates[randomInt(0, simulatedEventTemplates.length)]
+            : null;
         const insertedDriver = await client.query(
             `INSERT INTO drivers (nombre, email, telefono, estatus_operativo, vehicle_id, admin_id)
              VALUES ($1, $2, $3, $4, $5, $6)
@@ -135,6 +162,48 @@ export const createDriver = async (req: AuthRequest, res: Response): Promise<voi
             [nombre, email, telefono, estatus_operativo, parsed.input.vehicle_id ?? null, adminId]
         );
         const driverId = insertedDriver.rows[0].id as number;
+
+        let demoVehicleId: number | null = null;
+        let demoHardwareId: string | null = null;
+        if (shouldSeedDemoMonitoring && parsed.input.vehicle_id == null) {
+            const demoVehicle = await client.query<{ id: number; hardware_id: string }>(
+                `INSERT INTO vehicles (numero_flota, modelo, placas, hardware_id)
+                 VALUES ($1, $2, $3, $4)
+                 RETURNING id, hardware_id`,
+                [`SIM-${driverId}`, 'Unidad simulada Sigilia', 'SIMULADA', `SIM-HW-${driverId}`],
+            );
+            demoVehicleId = demoVehicle.rows[0].id;
+            demoHardwareId = demoVehicle.rows[0].hardware_id;
+            await client.query('UPDATE drivers SET vehicle_id = $1 WHERE id = $2', [demoVehicleId, driverId]);
+        } else if (shouldSeedDemoMonitoring && parsed.input.vehicle_id != null) {
+            const demoVehicle = await client.query<{ id: number; hardware_id: string | null }>(
+                'SELECT id, hardware_id FROM vehicles WHERE id = $1',
+                [parsed.input.vehicle_id],
+            );
+            demoVehicleId = demoVehicle.rows[0]?.id ?? null;
+            demoHardwareId = demoVehicle.rows[0]?.hardware_id ?? null;
+        }
+
+        if (shouldSeedDemoMonitoring && demoVehicleId != null) {
+            await client.query(
+                `INSERT INTO events (driver_id, event_type, severity, message, source, hardware_id, status)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                [
+                    driverId,
+                    simulatedEvent?.eventType,
+                    simulatedEvent?.severity,
+                    simulatedEvent?.message,
+                    'demo',
+                    demoHardwareId,
+                    'active',
+                ],
+            );
+            await client.query(
+                `INSERT INTO gps_tracks (vehicle_id, latitude, longitude)
+                 VALUES ($1, $2, $3)`,
+                [demoVehicleId, 20.9674, -89.5926],
+            );
+        }
 
         const newDriver = await client.query(
             `SELECT d.*, v.numero_flota, v.modelo, v.placas, v.hardware_id
@@ -149,10 +218,14 @@ export const createDriver = async (req: AuthRequest, res: Response): Promise<voi
             action: 'DRIVER_CREATED',
             resourceType: 'driver',
             resourceId: driverId,
-            details: { fields: Object.keys(parsed.input) },
+            details: {
+                fields: Object.keys(parsed.input),
+                demo_alert_created: shouldSeedDemoMonitoring,
+                simulated_gps_created: shouldSeedDemoMonitoring && demoVehicleId != null,
+            },
         });
         await client.query('COMMIT');
-        res.status(201).json(newDriver.rows[0]);
+        res.status(201).json({ ...newDriver.rows[0], demo_alert_created: shouldSeedDemoMonitoring });
     } catch (error) {
         await client.query('ROLLBACK');
         sendDatabaseError(error, res, 'crear');

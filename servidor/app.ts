@@ -30,7 +30,7 @@ import {
 } from './controllers/admin.controller';
 import { getAuditHistory } from './controllers/audit.controller';
 import { createDriver, getDrivers, updateDriver, deleteDriver } from './controllers/driver.controller';
-import { getEventsDashboard, getGpsTracking, ingestDeviceEvent } from './controllers/dashboard.controller';
+import { getBestRoute, getEventsDashboard, getGpsTracking, ingestDeviceEvent } from './controllers/dashboard.controller';
 import { requireDeviceKey } from './middleware/device-auth.middleware';
 import { authorizeArcoWithGmail, gmailArcoCallback } from './controllers/gmail.controller';
 import { recordCookieDecision, recordPrivacyNoticeAcceptance } from './controllers/privacy.controller';
@@ -58,6 +58,16 @@ const authRateLimit = rateLimit({
     message: { error: 'Demasiados intentos de autenticación. Intenta de nuevo más tarde.' },
 });
 
+const isDashboardRead = (req: Request): boolean =>
+    req.method === 'GET' && req.originalUrl.split('?')[0].startsWith('/api/dashboard/');
+const dashboardReadRateLimit = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 600,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Demasiadas lecturas del dashboard.' },
+});
+
 app.disable('x-powered-by');
 app.use(helmet({ crossOriginResourcePolicy: false }));
 app.use(cors({ origin: allowedOrigins, credentials: true }));
@@ -67,8 +77,45 @@ app.use(rateLimit({
     max: 200,
     standardHeaders: true,
     legacyHeaders: false,
+    skip: isDashboardRead,
     message: { error: 'Demasiadas peticiones, intenta de nuevo más tarde.' },
 }));
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 // --- RUTA DE VERIFICACIÓN DE ESTADO ---
 app.get('/api/health', async (req: Request, res: Response) => {
@@ -119,8 +166,10 @@ app.put('/api/drivers/:id', requireAuth, updateDriver);
 app.delete('/api/drivers/:id', requireAuth, deleteDriver);
 
 // --- RUTAS DE DASHBOARD Y TELEMETRÍA ---
+app.use('/api/dashboard', dashboardReadRateLimit);
 app.get('/api/dashboard/events', requireAuth, getEventsDashboard);
 app.get('/api/dashboard/gps', requireAuth, getGpsTracking);
+app.post('/api/dashboard/route', requireAuth, getBestRoute);
 app.post('/api/telemetry/events', requireDeviceKey, ingestDeviceEvent);
 app.post('/api/privacy/arco/gmail/authorize', authorizeArcoWithGmail);
 app.get('/api/privacy/arco/gmail/callback', gmailArcoCallback);

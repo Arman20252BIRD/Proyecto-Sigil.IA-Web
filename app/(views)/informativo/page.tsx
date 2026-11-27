@@ -8,7 +8,7 @@ import FlipCard from "../components/flip-card";
 import { PublicFooter, PublicHeader } from "../components/public-header";
 
 export const metadata: Metadata = {
-  title: "SIGILIA | Ciberseguridad & telemetría vehicular",
+  title: "Sigilia | Ciberseguridad & telemetría vehicular",
   description: "Protección inteligente y monitoreo vehicular en tiempo real para personas y flotillas.",
 };
 

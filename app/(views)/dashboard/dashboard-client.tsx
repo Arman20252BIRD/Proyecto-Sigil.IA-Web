@@ -3,11 +3,11 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type FormEvent, type ReactNode } from "react";
 import { fetchWithAuth } from "../../../servidor/controllers/frontend/dashboard.controller";
 import styles from "./page.module.css";
 import mapStyles from "./driver-map.module.css";
-import { Preferences } from "../legal/components/preferencias";
+import logStyles from "./event-logs.module.css";
 
 type Status = "Activo" | "Inactivo";
 type Vehicle = {
@@ -39,6 +39,11 @@ type EventRecord = {
   status: "active" | "resolved";
   conductor_nombre: string;
   numero_flota: string | null;
+  event_type?: string | null;
+  severity?: string | null;
+  message?: string | null;
+  source?: string | null;
+  hardware_id?: string | null;
 };
 type GpsRecord = {
   vehicle_id: number | string;
@@ -48,6 +53,10 @@ type GpsRecord = {
   numero_flota: string | null;
   placas: string | null;
   conductor_nombre: string | null;
+};
+type RouteResult = {
+  destination: { latitude: number; longitude: number; address: string };
+  route: { distance_km: number; duration_text: string; description: string; geometry: Array<[number, number]> };
 };
 type DriverInput = {
   nombre: string;
@@ -114,25 +123,6 @@ function isGpsRecord(value: unknown): value is GpsRecord {
     && (record.conductor_nombre == null || typeof record.conductor_nombre === "string");
 }
 
-function getOpenStreetMapUrls(latitude: number, longitude: number) {
-  const mapBounds = [
-    longitude - 0.01,
-    latitude - 0.01,
-    longitude + 0.01,
-    latitude + 0.01,
-  ].join(",");
-  const embedParams = new URLSearchParams({
-    bbox: mapBounds,
-    layer: "mapnik",
-    marker: `${latitude},${longitude}`,
-  });
-  const mapParams = new URLSearchParams({ mlat: String(latitude), mlon: String(longitude), zoom: "16" });
-  return {
-    embed: `https://www.openstreetmap.org/export/embed.html?${embedParams.toString()}`,
-    link: `https://www.openstreetmap.org/?${mapParams.toString()}`,
-  };
-}
-
 function isApiError(value: unknown): value is { error: string } {
   return typeof value === "object"
     && value !== null
@@ -160,6 +150,10 @@ async function fetchDrivers(): Promise<Vehicle[]> {
   const response = await fetchWithAuth(`${API_URL}/api/drivers`);
   const records: unknown = await response.json();
   if (!response.ok) {
+    if (response.status === 429) {
+      const retryAfter = response.headers.get("Retry-After");
+      throw new Error(`La API está temporalmente limitada.${retryAfter ? ` Reintenta en ${retryAfter} segundos.` : ""}`);
+    }
     throw new Error(`La API respondió HTTP ${response.status}.`);
   }
   if (!Array.isArray(records) || !records.every(isDriverRecord)) {
@@ -172,6 +166,10 @@ async function fetchApiRecords<T>(path: string, isRecord: (value: unknown) => va
   const response = await fetchWithAuth(`${API_URL}${path}`);
   const records: unknown = await response.json();
   if (!response.ok) {
+    if (response.status === 429) {
+      const retryAfter = response.headers.get("Retry-After");
+      throw new Error(`La API esta temporalmente limitada.${retryAfter ? ` Reintenta en ${retryAfter} segundos.` : ""}`);
+    }
     throw new Error(`La API respondió HTTP ${response.status}.`);
   }
   if (!Array.isArray(records) || !records.every(isRecord)) {
@@ -195,7 +193,7 @@ function isAdminProfile(value: unknown): value is AdminProfile {
 }
 
 async function fetchAdminProfile(): Promise<AdminProfile> {
-  const response = await fetchWithAuth(`${API_URL}/api/admin`);
+  const response = await fetchWithAuth(`${API_URL}/api/admin`, { cache: "no-store" });
   const result: unknown = await response.json();
   if (!response.ok) {
     throw new Error(isApiError(result) ? result.error : `La API respondió HTTP ${response.status}.`);
@@ -232,6 +230,10 @@ export default function DashboardClient() {
   const [isSavingAdminProfile, setIsSavingAdminProfile] = useState(false);
 
   const activeCount = useMemo(() => vehicles.filter((vehicle) => vehicle.status === "Activo").length, [vehicles]);
+  const gpsUnitCount = useMemo(
+    () => new Set(events.filter((event) => event.status === "active").map((event) => String(event.driver_id))).size,
+    [events],
+  );
   const activeEventDriverIds = useMemo(() => new Set(events.filter((event) => event.status === "active").map((event) => String(event.driver_id))), [events]);
   const vehiclesWithGps = useMemo(() => vehicles.map((vehicle) => {
     const hasActiveEvent = activeEventDriverIds.has(vehicle.backendId);
@@ -373,10 +375,21 @@ export default function DashboardClient() {
     };
   }, [showToast]);
   useEffect(() => {
+    let requestInFlight = false;
+    const refreshEvents = async () => {
+      if (requestInFlight) return;
+      requestInFlight = true;
+      try {
+        const records = await fetchApiRecords("/api/dashboard/events", isEventRecord);
+        setEvents(records);
+      } catch {
+        // La carga inicial muestra el error; el sondeo continúa sin saturar la API.
+      } finally {
+        requestInFlight = false;
+      }
+    };
     const interval = window.setInterval(() => {
-      fetchApiRecords("/api/dashboard/events", isEventRecord)
-        .then((records) => setEvents(records))
-        .catch(() => undefined);
+      void refreshEvents();
     }, 5000);
     return () => window.clearInterval(interval);
   }, []);
@@ -486,7 +499,7 @@ export default function DashboardClient() {
     <main className={styles.shell} data-theme-surface>
       <aside className={styles.sidebar}>
         <div className={`${styles.logo} logo`} aria-label="Sigil.IA">
-          <Image src="/logo-sigil-transparente.png" alt="Sigil.IA" width={176} height={117} priority />
+          <Image src="/logo-sigilia-original.png" alt="Sigilia" width={176} height={117} priority />
         </div>
         <nav className={styles.sidebarNav} aria-label="Módulos principales">
           <SideButton active={section === "overview"} onClick={() => go("overview")} icon="▦">Resumen</SideButton>
@@ -496,18 +509,28 @@ export default function DashboardClient() {
           <SideButton active={section === "support"} onClick={() => go("support")} icon="?">Soporte técnico</SideButton>
         </nav>
         <div className={styles.sidebarBottom}>
-          <Link href="/login" onClick={() => window.sessionStorage.removeItem("sigil_access_token")}>Cerrar sesión</Link>
+          <a
+            href="/login"
+            onClick={(event) => {
+              event.preventDefault();
+              window.sessionStorage.removeItem("sigil_access_token");
+              window.sessionStorage.removeItem("sigil_onboarding_token");
+              window.location.assign("/login");
+            }}
+          >
+            Cerrar sesión
+          </a>
         </div>
       </aside>
 
       <section className={styles.content}>
-        <header className={styles.topbar}>
-          <div><span className={styles.breadcrumb}>PANEL DE ADMINISTRACIÓN / {section === "fleet" ? "CONDUCTORES" : section === "admin" ? "CUENTA" : section === "privacy" ? "PRIVACIDAD" : section === "support" ? "SOPORTE" : "RESUMEN"}</span><h1>{section === "fleet" ? "Gestión de conductores" : section === "admin" ? "Mi perfil" : section === "privacy" ? "Mi privacidad" : section === "support" ? "Soporte técnico" : "Supervisión telemática activa"}</h1></div>
-          <div className={styles.topActions}><Preferences inHeader /><div className={`${styles.userBadge} userBadge`}>{adminProfile?.profile_photo ? <img src={adminProfile.profile_photo} alt="Foto del administrador" /> : <span>{adminProfile?.nombre.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase() ?? "—"}</span>}<div><strong>{adminProfile?.nombre ?? (isLoadingAdminProfile ? "Cargando cuenta…" : "Administrador")}</strong><small>{adminProfile?.empresa ?? "Administración"}</small></div></div></div>
+        <header className={`${styles.topbar} ${section === "overview" ? styles.overviewTopbar : ""}`}>
+          <div><h1>{section === "fleet" ? "Gestión de conductores" : section === "admin" ? "Mi perfil" : section === "privacy" ? "Mi privacidad" : section === "support" ? "Soporte técnico" : "Panel de Control Operativo"}</h1></div>
+          <div className={styles.topActions}><div className={`${styles.userBadge} userBadge`}>{adminProfile?.profile_photo ? <img src={adminProfile.profile_photo} alt="Foto del administrador" /> : <span>{adminProfile?.nombre.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase() ?? "—"}</span>}<div><strong>{adminProfile?.nombre ?? (isLoadingAdminProfile ? "Cargando cuenta…" : "Administrador")}</strong><small>{adminProfile?.empresa ?? "Administración"}</small></div></div></div>
         </header>
 
         <div className={styles.dashboard} id="overview">
-          {section === "overview" && <SummaryPanel activeCount={activeCount} vehicleCount={vehicles.length} events={events} gpsCount={gpsRecords.length} onFleet={() => go("fleet")} />}
+          {section === "overview" && <SummaryPanel activeCount={activeCount} vehicleCount={vehicles.length} events={events} gpsCount={gpsUnitCount} onFleet={() => go("fleet")} />}
           {section === "fleet" && <><FleetPanel vehicles={filtered} search={search} selectedId={selected?.id ?? ""} isLoading={isLoadingDrivers} onSearch={setSearch} onAdd={() => { setEditing(null); setModal("driver"); }} onSelect={selectDriver} onEdit={(vehicle) => { setEditing(vehicle); setModal("driver"); }} onDelete={(vehicle) => { setSelected(vehicle); setModal("delete"); }} />{selectedWithGps && <DriverWorkspace vehicle={selectedWithGps} gps={selectedGps} events={selectedEvents} hasActiveEvent={hasActiveEvent} tab={driverTab} setTab={setDriverTab} onToast={showToast} />}</>}
           {section === "admin" && <AdminSettings profile={adminProfile} isLoading={isLoadingAdminProfile} onRetry={loadAdminProfile} onPrivacy={() => go("privacy")} />}
           {section === "privacy" && <PrivacyPanel onToast={showToast} />}
@@ -526,7 +549,7 @@ function SideButton({ active, onClick, icon, badge, children }: { active: boolea
   const label = children === "Conductores ESP32" ? "Conductores" : children === "Configuración admin" ? "Configuración" : children;
   return <button className={active ? styles.navActive : ""} onClick={onClick}><span>{icon}</span>{label}{badge && <b>{badge}</b>}</button>;
 }
-function Metric({ label, value, detail, tone }: { label: string; value: string; detail: string; tone: string }) { return <article className={`${styles.metric} ${styles[`metric${tone}`]}`}><span>{label}</span><strong>{value}</strong><small>{detail}</small></article>; }
+function Metric({ label, value, tone }: { label: string; value: string; tone: string }) { return <article className={`${styles.metric} ${styles[`metric${tone}`]}`}><span>{label}</span><strong>{value}</strong></article>; }
 
 function SummaryPanel({ activeCount, vehicleCount, events, gpsCount, onFleet }: { activeCount: number; vehicleCount: number; events: EventRecord[]; gpsCount: number; onFleet: () => void }) {
   const todayTimestamp = useSyncExternalStore(subscribeToLocalDay, getLocalDaySnapshot, getServerLocalDaySnapshot);
@@ -549,9 +572,9 @@ function SummaryPanel({ activeCount, vehicleCount, events, gpsCount, onFleet }: 
   });
   const maxDailyEvents = Math.max(1, ...dayBuckets.map((day) => day.count));
   return <>
-    <div className={styles.metrics}><Metric label="Unidades activas" value={String(activeCount).padStart(2, "0")} detail={`de ${vehicleCount} registradas`} tone="blue" /><Metric label="Eventos registrados" value={String(events.length).padStart(2, "0")} detail="actualizado desde la API" tone="cyan" /><Metric label="Unidades con GPS" value={String(activeCount).padStart(2, "0")} detail="última posición disponible" tone="green" /><Metric label="Conductores registrados" value={String(vehicleCount).padStart(2, "0")} detail="base de datos" tone="orange" /></div>
-    <section className={styles.panel}><div className={styles.panelHeader}><div><span className={styles.sectionLabel}>01 / ACTIVIDAD</span><h2>Actividad de eventos</h2><p>Las barras cambian con las alertas recibidas cada día.</p></div><span className={styles.liveTag}>● API activa</span></div><div className={`${styles.chartBars} chartBarsReference`}>{dayBuckets.map((day) => <div className={`${styles.chartColumn} chartColumnReference`} key={day.key}><span className="chartBarReference" style={{ height: `${day.count ? Math.max(8, day.count / maxDailyEvents * 100) : 0}%` }} /><small>{day.label}</small><em>{day.count}</em></div>)}</div></section>
-    <section className={`${styles.panel} ${styles.summaryHistory}`}><div className={styles.panelHeader}><div><span className={styles.sectionLabel}>02 / REGISTRO HISTÓRICO</span><h2>Eventos recientes</h2><p>Se actualiza automáticamente con cada alerta recibida.</p></div><button className={styles.linkButton} onClick={onFleet}>Ver conductores →</button></div><div className={styles.historyTable}>{events.length ? events.slice(0, 8).map((event) => <div className={styles.historyRow} key={String(event.id)}><span className={styles.resolvedDot} /><div><strong>{event.conductor_nombre}</strong><small>Evento #{event.id} · {event.numero_flota ?? `Conductor ${event.driver_id}`} · {new Date(event.created_at).toLocaleString("es-MX")}</small></div><b>Registrado</b></div>) : <p>No hay eventos registrados.</p>}</div></section>
+    <div className={styles.metrics}><Metric label="Unidades activas" value={String(activeCount).padStart(2, "0")} tone="blue" /><Metric label="Eventos registrados" value={String(events.length).padStart(2, "0")} tone="cyan" /><Metric label="GPS activos" value={String(gpsCount).padStart(2, "0")} tone="green" /><Metric label="Conductores registrados" value={String(vehicleCount).padStart(2, "0")} tone="orange" /></div>
+    <section className={styles.panel}><div className={styles.panelHeader}><div><h2>Actividad de eventos</h2><p>Las barras cambian con las alertas recibidas cada día.</p></div></div><div className={`${styles.chartBars} chartBarsReference`}>{dayBuckets.map((day) => <div className={`${styles.chartColumn} chartColumnReference`} key={day.key}><span className="chartBarReference" style={{ height: `${day.count ? Math.max(8, day.count / maxDailyEvents * 100) : 0}%` }} /><small>{day.label}</small><em>{day.count}</em></div>)}</div></section>
+    <section className={`${styles.panel} ${styles.summaryHistory}`}><div className={styles.panelHeader}><div><h2>Eventos recientes</h2><p>Se actualiza automáticamente con cada alerta recibida.</p></div><button className={styles.linkButton} onClick={onFleet}>Ver conductores →</button></div><div className={styles.historyTable}>{events.length ? events.slice(0, 8).map((event) => <div className={styles.historyRow} key={String(event.id)}><span className={styles.resolvedDot} /><div><strong>{event.conductor_nombre}</strong><small>Evento #{event.id} · {event.numero_flota ?? `Conductor ${event.driver_id}`} · {new Date(event.created_at).toLocaleString("es-MX")}</small></div><b>Registrado</b></div>) : <p>No hay eventos registrados.</p>}</div></section>
   </>;
 }
 
@@ -559,7 +582,7 @@ function LegacySummaryPanel({ activeCount, vehicleCount, events, gpsCount, onFle
   const history = [
     { label: "Conductores activos", value: activeCount, tone: "chartGreen" },
     { label: "Eventos registrados", value: events.length, tone: "chartBlue" },
-    { label: "Unidades con GPS", value: gpsCount, tone: "chartRed" },
+    { label: "GPS activos", value: gpsCount, tone: "chartRed" },
   ];
   const eventTimestamps = events.map((event) => Date.parse(event.created_at)).filter(Number.isFinite);
   const latestEventDate = eventTimestamps.length ? new Date(Math.max(...eventTimestamps)) : null;
@@ -581,7 +604,7 @@ function LegacySummaryPanel({ activeCount, vehicleCount, events, gpsCount, onFle
   });
   const maxDailyEvents = Math.max(1, ...dayBuckets.map((day) => day.count));
   return <>
-    <div className={styles.metrics}><Metric label="Unidades activas" value={String(activeCount).padStart(2, "0")} detail={`de ${vehicleCount} registradas`} tone="blue" /><Metric label="Eventos registrados" value={String(events.length).padStart(2, "0")} detail="consulta PostgreSQL" tone="cyan" /><Metric label="Unidades con GPS" value={String(activeCount).padStart(2, "0")} detail="última posición disponible" tone="green" /><Metric label="Conductores registrados" value={String(vehicleCount).padStart(2, "0")} detail="base de datos" tone="orange" /></div>
+    <div className={styles.metrics}><Metric label="Unidades activas" value={String(activeCount).padStart(2, "0")} tone="blue" /><Metric label="Eventos registrados" value={String(events.length).padStart(2, "0")} tone="cyan" /><Metric label="GPS activos" value={String(activeCount).padStart(2, "0")} tone="green" /><Metric label="Conductores registrados" value={String(vehicleCount).padStart(2, "0")} tone="orange" /></div>
     <div className={styles.summaryGrid}>
       <section className={styles.panel}><div className={styles.panelHeader}><div><span className={styles.sectionLabel}>01 / TENDENCIA OPERATIVA</span><h2>Actividad de eventos</h2><p>Actividad en los siete días alrededor del registro más reciente.</p></div><span className={styles.liveTag}>● PostgreSQL</span></div><div className={styles.chartBars}>{dayBuckets.map((day) => <div className={styles.chartColumn} key={day.key}><span style={{ height: `${day.count ? Math.max(8, day.count / maxDailyEvents * 100) : 0}%` }} /><small>{day.label}</small></div>)}</div></section>
       <section className={styles.panel}><div className={styles.panelHeader}><div><span className={styles.sectionLabel}>02 / ESTADO HISTÓRICO</span><h2>Resumen de eventos</h2></div></div><div className={styles.historyList}>{history.map((item) => <div className={styles.historyItem} key={item.label}><span className={`${styles.historyDot} ${styles[item.tone]}`} /><div><strong>{item.value}</strong><small>{item.label}</small></div></div>)}</div></section>
@@ -610,7 +633,7 @@ function SupportPanel({ onToast }: { onToast: (message: string) => void }) {
 
 function FleetPanel({ vehicles, search, selectedId, isLoading, onSearch, onAdd, onSelect, onEdit, onDelete }: { vehicles: Vehicle[]; search: string; selectedId: string; isLoading: boolean; onSearch: (value: string) => void; onAdd: () => void; onSelect: (vehicle: Vehicle) => void; onEdit: (vehicle: Vehicle) => void; onDelete: (vehicle: Vehicle) => void }) {
   return <section className={styles.panel} id="fleet">
-    <div className={styles.panelHeader}><div><span className={styles.sectionLabel}>01 / CONDUCTORES</span><h2>Gestionar conductor</h2><p>Busca por ID o nombre y selecciona un conductor para desplegar su detalle.</p></div><button className={styles.primaryButton} onClick={onAdd}>+ Alta de conductor</button></div>
+    <div className={styles.panelHeader}><div><h2>Gestionar conductor</h2><p>Busca por ID o nombre y selecciona un conductor para desplegar su detalle.</p></div><button className={styles.primaryButton} onClick={onAdd}>+ Alta de conductor</button></div>
     <div className={styles.fleetToolbar}><label>⌕ <input className={styles.searchBox} value={search} onChange={(event) => onSearch(event.target.value)} placeholder="Buscar por ID o nombre..." /></label><span>{vehicles.length} resultados</span></div>
     <div className={styles.tableWrap}><table><thead><tr><th>Unidad / conductor</th><th>Teléfono</th><th>Correo electrónico</th><th>Estado</th><th>Última ubicación</th><th>Acciones</th></tr></thead><tbody>
       {vehicles.length ? vehicles.map((vehicle) => <tr key={vehicle.backendId} className={`${styles.driverRow} ${selectedId === vehicle.id ? styles.driverRowSelected : ""}`}>
@@ -632,42 +655,109 @@ function DriverWorkspace({ vehicle, gps, events, hasActiveEvent, tab, setTab, on
     : "Sin datos";
   const latestEvent = events[0];
   return <section className={styles.driverWorkspace} id={`driver-detail-${vehicle.id}`}>
-    <div className={styles.driverHeader}><div><span className={styles.sectionLabel}>02 / CONDUCTOR SELECCIONADO</span><h2>{vehicle.driver} <small>{vehicle.id}</small></h2><p>{vehicle.phone || "Sin teléfono registrado"} · {vehicle.location}</p></div><span className={`${styles.status} ${vehicle.status === "Activo" ? styles.statusActive : styles.statusOffline}`}><i />{vehicle.status}</span></div>
-     <nav className={styles.detailTabs} aria-label="Detalle del conductor">{[["resumen", "Resumen"], ["events", "Eventos"], ["gps", "GPS"], ["contact", "Contactar"], ["logs", "Logs y registros"]].map(([id, label]) => <button key={id} className={tab === id ? styles.detailTabActive : styles.detailTab} onClick={() => setTab(id)}>{label}</button>)}</nav>
+    <div className={styles.driverHeader}><div><h2>{vehicle.driver} <small>{vehicle.id}</small></h2><p>{vehicle.phone || "Sin teléfono registrado"} · {vehicle.location}</p></div></div>
+     <nav className={styles.detailTabs} aria-label="Detalle del conductor">{[["resumen", "Resumen"], ["events", "Eventos"], ["gps", "GPS"], ["contact", "Contactar"], ["logs", "Registros"]].map(([id, label]) => <button key={id} className={tab === id ? styles.detailTabActive : styles.detailTab} onClick={() => setTab(id)}>{label}</button>)}</nav>
     {tab === "resumen" && <div className={styles.detailGrid}><DetailCard title="Estado" value={vehicle.status} detail="Estado operativo del conductor" /><DetailCard title="Último evento" value={latestEvent ? `Evento #${latestEvent.id}` : "Sin eventos"} detail={latestEvent ? new Date(latestEvent.created_at).toLocaleString("es-MX") : "Sin actividad registrada"} /><DetailCard title="Última posición GPS" value={coordinates} detail={gps ? new Date(gps.timestamp).toLocaleString("es-MX") : "Sin datos GPS asociados"} /></div>}
     {tab === "events" && <EventTable events={events} />}
-     {tab === "gps" && <div className={styles.driverMap}><DriverGpsMap vehicle={vehicle} gps={hasActiveEvent ? gps : null} hasActiveEvent={hasActiveEvent} /></div>}
+     {tab === "gps" && <div className={styles.driverMap}><DriverGpsMap vehicle={vehicle} gps={hasActiveEvent ? gps : null} hasActiveEvent={hasActiveEvent} onToast={onToast} /></div>}
     {tab === "contact" && <div className={styles.contactModule}><div className={styles.contactInfo}><span className={styles.contactAvatar}>{vehicle.driver.split(" ").map((name) => name[0]).slice(0, 2).join("")}</span><div><h3>Contactar al conductor</h3><p>{vehicle.driver} · {vehicle.phone || "Sin teléfono registrado."}</p></div></div><button className={styles.primaryButton} disabled={!vehicle.phone} onClick={() => setContactOpen(true)}>Contactar conductor</button></div>}
     {contactOpen && vehicle.phone && <Modal title="Contactar al conductor" onClose={() => setContactOpen(false)}><div className={styles.callDialog}><span className={styles.contactAvatar}>{vehicle.driver.split(" ").map((name) => name[0]).slice(0, 2).join("")}</span><h3>{vehicle.driver}</h3><p>{vehicle.phone}</p><small>Se abrirá la aplicación de llamadas disponible en este equipo.</small><a className={styles.primaryButton} href={`tel:${vehicle.phone}`}>Llamar ahora</a></div></Modal>}
-    {tab === "logs" && <EventTable events={events} />}
+    {tab === "logs" && <EventLogs events={events} />}
   </section>;
 }
 
-function DriverGpsMap({ vehicle, gps, hasActiveEvent }: { vehicle: Vehicle; gps: GpsRecord | null; hasActiveEvent: boolean }) {
+function DriverGpsMap({ vehicle, gps, hasActiveEvent, onToast }: { vehicle: Vehicle; gps: GpsRecord | null; hasActiveEvent: boolean; onToast: (message: string) => void }) {
+  const [destination, setDestination] = useState("");
+  const [route, setRoute] = useState<RouteResult | null>(null);
+  const [isRouting, setIsRouting] = useState(false);
+  const [routeError, setRouteError] = useState("");
   if (!hasActiveEvent) return <p>El monitoreo GPS se activarÃ¡ cuando este conductor tenga un evento activo.</p>;
   if (!gps) return <p>No hay posiciones GPS registradas para este vehículo.</p>;
   if (gps.latitude === null || gps.longitude === null) return <p>La posición GPS no contiene coordenadas válidas.</p>;
 
-  const coordinates = `${gps.latitude.toFixed(4)}, ${gps.longitude.toFixed(4)}`;
-  const map = getOpenStreetMapUrls(gps.latitude, gps.longitude);
+  const origin = { latitude: gps.latitude, longitude: gps.longitude };
+  async function calculateRoute(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!destination.trim()) {
+      setRouteError("Escribe una ciudad, dirección o coordenadas de destino.");
+      return;
+    }
+    setIsRouting(true);
+    setRouteError("");
+    try {
+      const response = await fetchWithAuth(`${API_URL}/api/dashboard/route`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ origin, destination: destination.trim() }),
+      });
+      const result: unknown = await response.json();
+      if (!response.ok) throw new Error(isApiError(result) ? result.error : "No se pudo calcular la ruta.");
+      if (typeof result !== "object" || result === null || !("route" in result) || !("destination" in result)) throw new Error("La API devolvió una ruta no válida.");
+      setRoute(result as RouteResult);
+      onToast("Ruta recomendada calculada con OpenStreetMap.");
+    } catch (error) {
+      setRouteError(error instanceof Error ? error.message : "No se pudo calcular la ruta.");
+    } finally {
+      setIsRouting(false);
+    }
+  }
   return <>
-    <div className={mapStyles.mapFrame}>
-      <iframe
-        src={map.embed}
-        title={`Ubicación GPS de ${vehicle.driver} (${vehicle.id})`}
-        loading="lazy"
-        referrerPolicy="no-referrer"
-      />
-    </div>
-    <div className={mapStyles.mapDetails}>
-      <p>Ubicación simulada: {coordinates} · {new Date(gps.timestamp).toLocaleString("es-MX")}</p>
-      <a href={map.link} target="_blank" rel="noreferrer">Abrir en OpenStreetMap</a>
-    </div>
+    <form className={mapStyles.routeForm} onSubmit={calculateRoute}>
+      <label htmlFor={`route-destination-${vehicle.backendId}`}>Buscar la mejor ruta</label>
+      <div className={mapStyles.routeControls}>
+        <input id={`route-destination-${vehicle.backendId}`} value={destination} onChange={(event) => setDestination(event.target.value)} placeholder="Escribe una dirección o coordenadas" />
+        <button type="submit" disabled={isRouting}>{isRouting ? "Calculando..." : "Calcular ruta"}</button>
+      </div>
+      {routeError && <p className={mapStyles.routeError}>{routeError}</p>}
+    </form>
+    {route && <div className={mapStyles.routeSummary}><strong>Mejor ruta sugerida</strong><span>{route.destination.address} · {route.route.distance_km} km · {route.route.duration_text}</span><small>{route.route.description}</small><a href={`https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=${gps.latitude},${gps.longitude};${route.destination.latitude},${route.destination.longitude}`} target="_blank" rel="noreferrer">Abrir indicaciones en OpenStreetMap</a></div>}
   </>;
 }
 
 function DetailCard({ title, value, detail }: { title: string; value: string; detail: string }) { return <article className={styles.detailCard}><span>{title}</span><strong>{value}</strong><small>{detail}</small></article>; }
-function EventTable({ events }: { events: EventRecord[] }) { return <div className={styles.eventList}>{events.length ? events.map((event) => <div className={styles.eventRow} key={String(event.id)}><i className={styles.resolvedDot} /><div><strong>Evento #{event.id}</strong><span>{new Date(event.created_at).toLocaleString("es-MX")} · {event.numero_flota ?? `Conductor ${event.driver_id}`}</span></div><code>{event.conductor_nombre}</code></div>) : <p>No hay eventos registrados para este conductor.</p>}</div>; }
+function formatEventLabel(eventType: string | null | undefined): string {
+  const label = (eventType ?? "alerta").replaceAll("_", " ");
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+function formatSeverity(severity: string | null | undefined): string {
+  return severity === "critical" ? "Crítica" : severity === "warning" ? "Advertencia" : "Informativa";
+}
+
+function EventTable({ events }: { events: EventRecord[] }) { return <div className={styles.eventList}>{events.length ? events.map((event) => { const severity = formatSeverity(event.severity); const label = formatEventLabel(event.event_type); return <div className={styles.eventRow} key={String(event.id)}><i className={event.status === "active" ? styles.processDot : styles.resolvedDot} /><div><strong>{label}</strong><span>{new Date(event.created_at).toLocaleString("es-MX")} · {severity} · {event.numero_flota ?? `Conductor ${event.driver_id}`}</span>{event.message && <small>{event.message}</small>}</div><code>{event.status === "active" ? "Activa" : "Resuelta"}</code></div>; }) : <p>No hay eventos registrados para este conductor.</p>}</div>; }
+
+const SIMULATED_EVENT_ORIGIN = "Calle 45, Avenida Alemán, Mérida, Yucatán, México";
+
+function formatEventOrigin(event: EventRecord): string {
+  return event.source === "demo" ? SIMULATED_EVENT_ORIGIN : event.source ?? "Telemetría";
+}
+
+function EventLogs({ events }: { events: EventRecord[] }) {
+  return <section className={logStyles.eventLogs} aria-label="Registros detallados del conductor">
+    <header className={logStyles.eventLogsHeader}>
+      <div><h3>Registros</h3><p>Bitácora detallada de alertas y cambios detectados en la unidad.</p></div>
+      <span>{events.length} {events.length === 1 ? "registro" : "registros"}</span>
+    </header>
+    {events.length ? <div className={logStyles.eventLogsList}>{events.map((event) => {
+      const occurredAt = new Date(event.created_at);
+      return <article className={logStyles.eventLogRow} key={String(event.id)}>
+        <div className={logStyles.eventLogMarker}><i className={event.status === "active" ? styles.processDot : styles.resolvedDot} /></div>
+        <div className={logStyles.eventLogMain}>
+          <div className={logStyles.eventLogTitle}><strong>{formatEventLabel(event.event_type)}</strong><code>{event.status === "active" ? "Activa" : "Resuelta"}</code></div>
+          <p>{event.message ?? "Sin descripción disponible."}</p>
+          <dl className={logStyles.eventLogMeta}>
+            <div><dt>Fecha</dt><dd>{occurredAt.toLocaleDateString("es-MX")}</dd></div>
+            <div><dt>Hora</dt><dd>{occurredAt.toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</dd></div>
+            <div><dt>Severidad</dt><dd>{formatSeverity(event.severity)}</dd></div>
+            <div><dt>Unidad</dt><dd>{event.numero_flota ?? `Conductor ${event.driver_id}`}</dd></div>
+            <div><dt>Origen</dt><dd>{formatEventOrigin(event)}</dd></div>
+            <div><dt>Registro</dt><dd>#{event.id}</dd></div>
+          </dl>
+        </div>
+      </article>;
+    })}</div> : <p className={logStyles.eventLogsEmpty}>No hay registros de eventos para este conductor.</p>}
+  </section>;
+}
 
 type PrivacyAccess = {
   identificacion: { nombre_completo: string };

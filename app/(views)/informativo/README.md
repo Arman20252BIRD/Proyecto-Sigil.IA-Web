@@ -2,7 +2,7 @@
 
 ## Objetivo
 
-Landing pública de SIGILIA basada en el HTML de referencia y en la documentación del proyecto. Explica la plataforma de ciberseguridad y telemetría vehicular de forma clara para visitantes y clientes corporativos.
+Landing pública de Sigilia basada en el HTML de referencia y en la documentación del proyecto. Explica la plataforma de ciberseguridad y telemetría vehicular de forma clara para visitantes y clientes corporativos.
 
 ## Estructura
 

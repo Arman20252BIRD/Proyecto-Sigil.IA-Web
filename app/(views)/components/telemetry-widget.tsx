@@ -2,7 +2,7 @@ import styles from "./telemetry-widget.module.css";
 
 export function TelemetryWidget() {
   return (
-    <aside className={styles.widget} aria-label="Vista conceptual de telemetría SIGILIA">
+    <aside className={styles.widget} aria-label="Vista conceptual de telemetría Sigilia">
       <div className={styles.widgetHeader}>
         <span><i /> Telemetría vehicular</span>
         <b>DEMO</b>

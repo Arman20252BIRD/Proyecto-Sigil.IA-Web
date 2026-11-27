@@ -3,7 +3,7 @@ import "./(views)/globals.css";
 import "./(views)/theme-overrides.css";
 
 export const metadata: Metadata = {
-  title: "SIGILIA | Ciberseguridad & telemetría vehicular",
+  title: "Sigilia | Ciberseguridad & telemetría vehicular",
   description: "Ciberseguridad y telemetría vehicular inteligente para proteger y monitorear tu flota.",
   icons: {
     icon: "/logo-sigilia-original.png",

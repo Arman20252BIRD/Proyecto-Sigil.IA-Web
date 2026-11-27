@@ -12,14 +12,9 @@ async function main(): Promise<void> {
     const nombre = argument('nombre');
     const email = argument('email').trim().toLowerCase();
     const empresa = argument('empresa');
-    const temporaryPassword = argument('temporary-password');
-    const expiryIndex = process.argv.indexOf('--expires-hours');
-    const hours = Number(expiryIndex >= 0 ? process.argv[expiryIndex + 1] : '24');
-
-    if (temporaryPassword.length < 12) throw new Error('La contraseña temporal debe tener al menos 12 caracteres.');
-    if (!Number.isFinite(hours) || hours <= 0) throw new Error('Las horas de expiración no son válidas.');
-
-    const passwordHash = await bcrypt.hash(temporaryPassword, 12);
+    const password = argument('password');
+    if (password.length < 12) throw new Error('La contrasena debe tener al menos 12 caracteres.');
+    const passwordHash = await bcrypt.hash(password, 12);
     await pool.query(`
         ALTER TABLE admins ADD COLUMN IF NOT EXISTS empresa TEXT;
         ALTER TABLE admins ADD COLUMN IF NOT EXISTS account_role TEXT NOT NULL DEFAULT 'admin';
@@ -37,7 +32,7 @@ async function main(): Promise<void> {
             (nombre, email, password, empresa, account_role, account_status,
              first_login_required, temporary_password_expires_at, totp_enabled, mfa_facial_status)
          VALUES ($1, $2, $3, $4, 'admin', 'active', TRUE,
-                 NOW() + ($5::text || ' hours')::interval, FALSE, FALSE)
+                 NULL, FALSE, FALSE)
          ON CONFLICT (email) DO UPDATE SET
             nombre = EXCLUDED.nombre,
             empresa = EXCLUDED.empresa,
@@ -45,18 +40,18 @@ async function main(): Promise<void> {
             account_role = 'admin',
             account_status = 'active',
             first_login_required = TRUE,
-            temporary_password_expires_at = EXCLUDED.temporary_password_expires_at,
+            temporary_password_expires_at = NULL,
             totp_enabled = FALSE,
             mfa_facial_status = FALSE,
             mfa_nonce = NULL,
             mfa_setup_expires_at = NULL,
             updated_at = NOW()
-         RETURNING id, email, empresa, temporary_password_expires_at`,
-        [nombre, email, passwordHash, empresa, hours]
+         RETURNING id, email, empresa, first_login_required`,
+        [nombre, email, passwordHash, empresa]
     );
 
     console.table(result.rows);
-    console.log('Cuenta provisional creada. Entrega las credenciales únicamente por el canal corporativo autorizado.');
+    console.log('Cuenta administrativa creada. Entrega las credenciales únicamente por el canal corporativo autorizado.');
 }
 
 main()

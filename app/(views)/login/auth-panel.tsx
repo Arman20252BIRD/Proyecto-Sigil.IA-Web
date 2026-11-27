@@ -136,18 +136,30 @@ export default function AuthPanel({ initialResetToken = "", initialInvitationTok
 
   async function handlePrivacyNoticeChange(accepted: boolean) {
     setPrivacyNoticeAccepted(accepted);
+    const activeToken = onboardingToken || window.sessionStorage.getItem(ONBOARDING_TOKEN_STORAGE_KEY) || "";
     if (!accepted) {
       setPrivacyConsentStatus("idle");
       document.cookie = `${PRIVACY_NOTICE_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`;
+      if (activeToken) {
+        setPrivacyConsentStatus("saving");
+        try {
+          const response = await fetch(`${API_URL}/api/privacy/onboarding-legal`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${activeToken}` },
+            body: JSON.stringify({ checked: false }),
+          });
+          setPrivacyConsentStatus(response.ok ? "idle" : "error");
+        } catch { setPrivacyConsentStatus("error"); }
+      }
       return;
     }
 
     setPrivacyConsentStatus("saving");
     try {
-      const response = await fetch(`${API_URL}/api/privacy/notice/accept`, {
+      const response = await fetch(`${API_URL}${activeToken ? "/api/privacy/onboarding-legal" : "/api/privacy/notice/accept"}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accepted: true, version: "1.0" }),
+        headers: { "Content-Type": "application/json", ...(activeToken ? { Authorization: `Bearer ${activeToken}` } : {}) },
+        body: JSON.stringify(activeToken ? { checked: true } : { accepted: true, version: "1.0" }),
       });
       if (!response.ok) throw new Error("privacy-consent-not-recorded");
       const secure = window.location.protocol === "https:" ? "; Secure" : "";
@@ -896,11 +908,11 @@ export default function AuthPanel({ initialResetToken = "", initialInvitationTok
             captured={Boolean(capturedFaceDescriptor)}
           />
           <label className={styles.consent}>
-            <input type="checkbox" name="privacyNoticeAccepted" required checked={privacyNoticeAccepted} onChange={(event) => void handlePrivacyNoticeChange(event.target.checked)} />
+            <input type="checkbox" name="privacyNoticeAccepted" required checked={privacyNoticeAccepted} disabled={privacyConsentStatus === "saving"} onChange={(event) => void handlePrivacyNoticeChange(event.target.checked)} />
             <span>He leído y acepto el <a href="/legal/privacidad" target="_blank" rel="noreferrer">Aviso de Privacidad</a> y los <a href="/legal/terminos" target="_blank" rel="noreferrer">Términos y Condiciones</a>.</span>
           </label>
-          {privacyConsentStatus === "saving" && <p className={styles.privacyConsentStatus} role="status">Registrando la aceptación...</p>}
-          {privacyConsentStatus === "error" && <p className={styles.privacyConsentError} role="alert">No fue posible registrar la aceptación. Inténtalo nuevamente.</p>}
+          {privacyConsentStatus === "saving" && <p className={styles.privacyConsentStatus} role="status">Registrando tu decisión...</p>}
+          {privacyConsentStatus === "error" && <p className={styles.privacyConsentError} role="alert">No fue posible registrar tu decisión. Inténtalo nuevamente.</p>}
           <label className={styles.consent}>
             <input type="checkbox" name="marketingConsent" />
             <span>Acepto recibir comunicados opcionales sobre mejoras y encuestas de Sigilia.</span>

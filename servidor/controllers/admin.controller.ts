@@ -1,7 +1,7 @@
 
 import { Response } from 'express';
 import bcrypt from 'bcryptjs';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { pool } from '../models/db';
 import type { AuthRequest } from '../middleware/auth.middleware';
 import { insertAuditLog } from '../models/audit-log.model';
@@ -296,68 +296,37 @@ export const rectifyPrivacyData = async (req: AuthRequest, res: Response): Promi
              WHERE admin_id = $1 AND status = 'pending'`,
             [id]
         );
-        const request = await client.query(
-            `INSERT INTO privacy_rectification_requests
-                (admin_id, nombre, email, telefono_corporativo, status,
-                 review_token_hash, review_token_expires_at)
-             VALUES ($1, $2, $3, $4, 'pending', $5, NOW() + INTERVAL '7 days')
-             RETURNING id`,
-            [id, nombre, email, telefono || null, '']
-        );
-        const reviewToken = randomBytes(32).toString('base64url');
-        const reviewTokenHash = createHash('sha256').update(reviewToken).digest('hex');
         await client.query(
-            `UPDATE privacy_rectification_requests
-             SET review_token_hash = $1
-             WHERE id = $2`,
-            [reviewTokenHash, request.rows[0].id]
+            `UPDATE admins SET nombre = $1, email = $2, telefono_corporativo = $3,
+                 updated_at = CURRENT_TIMESTAMP WHERE id = $4`,
+            [nombre, email, telefono || null, id]
         );
         await insertAuditLog(client, req, {
             adminId: id,
-            action: 'PRIVACY_RECTIFICATION_REQUESTED',
-            resourceType: 'privacy_rectification',
-            resourceId: request.rows[0].id,
-            details: { fields: ['nombre', 'email', 'telefono_corporativo'], status: 'pending' },
+            action: 'PRIVACY_RECTIFICATION',
+            resourceType: 'admin',
+            resourceId: id,
+            details: { fields: ['nombre', 'email', 'telefono_corporativo'] },
         });
         await client.query(
             `INSERT INTO privacy_audit_logs
                 (admin_id, action, result, details, purpose, notice_version)
-             VALUES ($1, 'RECTIFICATION', 'Solicitud enviada a soporte',
-                     '{"status":"pending","fields":["nombre","email","telefono"]}'::jsonb,
+             VALUES ($1, 'RECTIFICATION', 'Datos actualizados',
+                     '{"fields":["nombre","email","telefono"]}'::jsonb,
                      'Ejercicio del derecho de rectificación', '1.0')`,
             [id]
         );
         await client.query('COMMIT');
 
-        const frontendUrl = process.env.FRONTEND_URL ?? 'http://localhost:3000';
-        const reviewBaseUrl = `${frontendUrl}/legal/rectificacion`;
-        const approvedUrl = `${reviewBaseUrl}?requestId=${encodeURIComponent(String(request.rows[0].id))}&token=${encodeURIComponent(reviewToken)}&decision=approved`;
-        const rejectedUrl = `${reviewBaseUrl}?requestId=${encodeURIComponent(String(request.rows[0].id))}&token=${encodeURIComponent(reviewToken)}&decision=rejected`;
-        await sendPrivacyEmail(
-            process.env.SUPPORT_EMAIL ?? 'sigil.ia.soporte@gmail.com',
-            'Nueva solicitud de rectificación ARCO',
-            `<p>Se recibió una solicitud pendiente de rectificación para el usuario #${id}.</p>
-             <p><strong>Solicitud #${request.rows[0].id}</strong></p>
-             <p>Nombre solicitado: ${nombre.replace(/[&<>"']/g, '')}</p>
-             <p>Correo solicitado: ${email}</p>
-             <p>Teléfono solicitado: ${telefono || 'No registrado'}</p>
-             <p><a href="${approvedUrl}">Autorizar cambios</a></p>
-             <p><a href="${rejectedUrl}">Rechazar solicitud</a></p>`
-        );
-        res.status(202).json({
-            success: true,
-            status: 'pending',
-            requestId: String(request.rows[0].id),
-            message: 'Los cambios se le han notificado a soporte, en espera de verificación.',
-        });
+        res.json({ success: true, message: 'Tus datos se actualizaron correctamente.' });
     } catch (error) {
         await client.query('ROLLBACK');
         if (typeof error === 'object' && error !== null && 'code' in error && error.code === '23505') {
             res.status(409).json({ error: 'Ese correo ya está asociado a otra cuenta.' });
             return;
         }
-        console.error('Error al solicitar rectificación:', error);
-        res.status(500).json({ error: 'No fue posible enviar la solicitud de rectificación.' });
+        console.error('Error al rectificar los datos:', error);
+        res.status(500).json({ error: 'No fue posible actualizar tus datos.' });
     } finally {
         client.release();
     }
@@ -649,47 +618,66 @@ export const cancelPrivacyAccount = async (req: AuthRequest, res: Response): Pro
     }
     const confirmation = typeof req.body?.confirmation === 'string' ? req.body.confirmation.trim().toUpperCase() : '';
     if (confirmation !== 'CONFIRMAR') {
-        res.status(400).json({ error: 'Escribe CONFIRMAR para cancelar la cuenta.' });
+        res.status(400).json({ error: 'Escribe CONFIRMAR para reiniciar el perfil.' });
         return;
     }
 
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-        const updated = await client.query(
-            `UPDATE admins
-             SET account_status = 'cancelled', cancelled_at = CURRENT_TIMESTAMP,
-                 mfa_nonce = NULL, mfa_setup_expires_at = NULL, updated_at = CURRENT_TIMESTAMP
-             WHERE id = $1 AND account_status = 'active'
-             RETURNING id`,
-            [id]
+        const account = await client.query(
+            `SELECT id FROM admins WHERE id = $1 AND account_status = 'active' FOR UPDATE`, [id]
         );
-        if (updated.rows.length === 0) {
+        if (account.rows.length === 0) {
             await client.query('ROLLBACK');
-            res.status(409).json({ error: 'La cuenta ya se encuentra dada de baja.' });
+            res.status(409).json({ error: 'La cuenta no existe o ya se encuentra dada de baja.' });
             return;
         }
+        const vehicles = await client.query<{ id: string }>(
+            `SELECT v.id::text AS id FROM vehicles v
+             WHERE EXISTS (SELECT 1 FROM drivers d WHERE d.vehicle_id = v.id AND d.admin_id = $1)
+             ORDER BY v.id FOR UPDATE OF v`,
+            [id]
+        );
         await client.query(
             `INSERT INTO privacy_audit_logs
                 (admin_id, action, result, details, purpose, notice_version)
-             VALUES ($1, 'CANCELLATION', 'Cuenta dada de baja',
-                     '{"account_status":"cancelled"}'::jsonb,
+             VALUES ($1, 'CANCELLATION', 'Perfil reiniciado',
+                     '{}'::jsonb,
                      'Ejercicio del derecho de cancelación', '1.0')`,
             [id]
         );
         await insertAuditLog(client, req, {
             adminId: id,
-            action: 'PRIVACY_CANCELLATION',
+            action: 'PROFILE_RESET',
             resourceType: 'admin',
             resourceId: id,
-            details: { accountStatus: 'cancelled' },
+            details: { accountDeleted: false, profileReset: true },
         });
+        await client.query('DELETE FROM drivers WHERE admin_id = $1', [id]);
+        await client.query('DELETE FROM password_reset_tokens WHERE admin_id = $1', [id]);
+        if (vehicles.rows.length > 0) {
+            await client.query(
+                `DELETE FROM vehicles v WHERE v.id = ANY($1::bigint[])
+                 AND NOT EXISTS (SELECT 1 FROM drivers d WHERE d.vehicle_id = v.id)`,
+                [vehicles.rows.map((vehicle) => vehicle.id)]
+            );
+        }
+        await client.query(
+            `UPDATE admins SET nombre = 'Administrador', empresa = NULL, telefono_corporativo = NULL,
+                profile_photo = NULL, face_template_encrypted = NULL, mfa_facial_status = FALSE,
+                totp_secret_encrypted = NULL, totp_enabled = FALSE, totp_last_used_step = NULL,
+                mfa_nonce = NULL, mfa_setup_expires_at = NULL, mfa_failed_attempts = 0,
+                mfa_locked_until = NULL, first_login_required = TRUE,
+                temporary_password_expires_at = NULL, session_version = session_version + 1,
+                updated_at = NOW() WHERE id = $1`, [id]
+        );
         await client.query('COMMIT');
-        res.json({ success: true, message: 'La cuenta fue dada de baja correctamente.' });
+        res.json({ success: true, message: 'Perfil reiniciado. Inicia sesión con tu correo y contraseña actuales.' });
     } catch (error) {
         await client.query('ROLLBACK');
-        console.error('Error al cancelar la cuenta:', error);
-        res.status(500).json({ error: 'No fue posible cancelar la cuenta.' });
+        console.error('Error al reiniciar el perfil:', error);
+        res.status(500).json({ error: 'No fue posible reiniciar el perfil.' });
     } finally {
         client.release();
     }

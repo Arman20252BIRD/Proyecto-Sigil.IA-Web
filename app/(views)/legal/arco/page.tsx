@@ -13,14 +13,16 @@ export const metadata: Metadata = {
 
 export default function ArcoPage() {
   return <main className={styles.page}>
-    <header className={styles.header}><Link href="/informativo" className={styles.brand} aria-label="Sigilia"><Image src="/logo-sigilia-original.png" alt="Sigilia" width={2560} height={960} priority /></Link><Link href="/legal/privacidad">Leer aviso de privacidad</Link></header>
+    <header className={styles.header}><Link href="/informativo" className={styles.brand} aria-label="Sigilia"><Image src="/logo-sigilia-original.png" alt="Sigilia" width={2560} height={960} priority /></Link></header>
     <section className={styles.card}>
       <span className={styles.kicker}>DERECHOS ARCO</span>
       <h1>Solicitud de datos personales</h1>
       <p>Usa este formulario para solicitar acceso, rectificación o cancelación de tus datos personales.</p>
       <Suspense fallback={null}><GmailStatus /></Suspense>
       <ArcoForm />
-      <a className={styles.download} href="/legal/formato-solicitud-arco.pdf" download>Descargar formato ARCO PDF</a>
+      <div className={styles.backHomeWrap}>
+        <Link href="/informativo" className={styles.backHome}>Volver al inicio</Link>
+      </div>
     </section>
   </main>;
 }

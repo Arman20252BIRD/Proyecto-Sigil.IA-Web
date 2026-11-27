@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { pool } from '../models/db';
 
 const salesEmail = process.env.SALES_EMAIL?.trim() || 'ventas@sigilia.com.mx';
 
@@ -25,9 +26,28 @@ export const sendQuoteRequest = async (req: Request, res: Response): Promise<voi
     const fleet = clean(req.body?.fleet, 80);
     const message = clean(req.body?.message, 2000) || 'Sin mensaje adicional.';
     const privacyAccepted = req.body?.privacyAccepted === true || req.body?.privacyAccepted === 'on';
+    const quoteConsentId = typeof req.body?.quoteConsentId === 'string' ? req.body.quoteConsentId : '';
 
     if (!plan || !contact || !phone || !company || !fleet || !privacyAccepted || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
         res.status(400).json({ error: 'Completa todos los campos requeridos con información válida.' });
+        return;
+    }
+    if (!/^[0-9a-f-]{36}$/i.test(quoteConsentId)) {
+        res.status(400).json({ error: 'Marca la casilla y espera a que se registre tu aceptación.' });
+        return;
+    }
+    try {
+        const consent = await pool.query(
+            `SELECT 1 FROM audit_logs a WHERE a.resource_id = $1 AND a.action = 'QUOTE_LEGAL_CHECKED'
+             AND NOT EXISTS (SELECT 1 FROM audit_logs b WHERE b.resource_id = a.resource_id AND b.action = 'QUOTE_LEGAL_UNCHECKED') LIMIT 1`,
+            [quoteConsentId]
+        );
+        if (!consent.rowCount) {
+            res.status(400).json({ error: 'La aceptación no está registrada o fue retirada. Marca nuevamente la casilla.' });
+            return;
+        }
+    } catch {
+        res.status(503).json({ error: 'No fue posible verificar la aceptación. Intenta nuevamente.' });
         return;
     }
 

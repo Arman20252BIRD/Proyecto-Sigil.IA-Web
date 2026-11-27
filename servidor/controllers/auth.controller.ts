@@ -18,7 +18,7 @@ const MFA_MAX_FAILURES = 5;
 const PRIVACY_NOTICE_VERSION = '1.0';
 
 type FaceDescriptor = number[];
-type AdminIdentity = { id: string; email: string; nombre: string };
+type AdminIdentity = { id: string; email: string; nombre: string; sessionVersion?: number };
 type TokenPurpose = 'access' | 'mfa' | 'enroll' | 'setup' | 'onboarding';
 
 function isFaceDescriptor(value: unknown): value is FaceDescriptor {
@@ -39,14 +39,14 @@ function faceSimilarity(left: FaceDescriptor, right: FaceDescriptor): number {
 
 function signToken(admin: AdminIdentity, purpose: TokenPurpose, jti?: string): string {
     return jwt.sign(
-        { sub: admin.id, email: admin.email, nombre: admin.nombre, purpose, ...(jti ? { jti } : {}) },
+        { sub: admin.id, email: admin.email, nombre: admin.nombre, purpose, sessionVersion: admin.sessionVersion ?? 0, ...(jti ? { jti } : {}) },
         jwtSecret,
         { expiresIn: purpose === 'access' ? '8h' : purpose === 'mfa' ? '5m' : '15m' }
     );
 }
 
-function identityFromRow(admin: { id: string | number; email: string; nombre: string }): AdminIdentity {
-    return { id: String(admin.id), email: admin.email, nombre: admin.nombre };
+function identityFromRow(admin: { id: string | number; email: string; nombre: string; session_version?: number }): AdminIdentity {
+    return { id: String(admin.id), email: admin.email, nombre: admin.nombre, sessionVersion: admin.session_version ?? 0 };
 }
 
 async function recordMfaFailure(adminId: string, jti: string): Promise<void> {
@@ -281,9 +281,12 @@ export const completeAdminOnboarding = async (req: AuthRequest, res: Response): 
         return;
     }
 
+    let client: PoolClient | undefined;
     try {
         const passwordHash = await bcrypt.hash(password, 12);
-        const result = await pool.query(
+        client = await pool.connect();
+        await client.query('BEGIN');
+        const result = await client.query(
             `UPDATE admins
              SET nombre = $2,
                  telefono_corporativo = $3,
@@ -296,53 +299,54 @@ export const completeAdminOnboarding = async (req: AuthRequest, res: Response): 
                  mfa_nonce = NULL,
                  mfa_setup_expires_at = NULL,
                  updated_at = NOW()
-             WHERE id = $1 AND first_login_required = TRUE AND account_status = 'active'
+             WHERE id = $1 AND first_login_required = TRUE AND account_status = 'active' AND session_version = $8
                AND totp_enabled = TRUE AND totp_secret_encrypted IS NOT NULL
-             RETURNING id, nombre, email, telefono_corporativo, empresa, profile_photo` ,
+             RETURNING id, nombre, email, telefono_corporativo, empresa, profile_photo, session_version` ,
             [adminId, nombre.trim(), typeof telefono_corporativo === 'string' ? telefono_corporativo.trim() : null,
                 typeof empresa === 'string' ? empresa.trim() : '', passwordHash,
                 encryptFaceData(JSON.stringify(faceDescriptor)),
-                typeof profilePhoto === 'string' ? profilePhoto : null]
+                typeof profilePhoto === 'string' ? profilePhoto : null, req.admin?.sessionVersion ?? 0]
         );
         if (result.rowCount !== 1) {
+            await client.query('ROLLBACK');
             res.status(403).json({ error: 'La cuenta no está disponible para activación inicial.' });
             return;
         }
-        const privacyDocument = await pool.query(
+        const privacyDocument = await client.query(
             `SELECT id FROM privacy_documents WHERE document_type = 'privacy_notice' AND version = $1 LIMIT 1`,
             [PRIVACY_NOTICE_VERSION]
         );
         const privacyDocumentId = privacyDocument.rows[0]?.id ?? null;
-        await pool.query(
+        await client.query(
             `INSERT INTO privacy_consents (admin_id, document_id, consent_type, accepted, version, ip_address, user_agent)
              VALUES ($1, $2, 'privacy_notice', TRUE, $3, $4, $5),
-                    ($1, $2, 'terms', TRUE, $3, $4, $5),
-                    ($1, $2, 'biometric', TRUE, $3, $4, $5),
-                    ($1, $2, 'marketing', $6, $3, $4, $5)`,
+                    ($1, NULL, 'terms', TRUE, $3, $4, $5),
+                    ($1, NULL, 'biometric', TRUE, $3, $4, $5),
+                    ($1, NULL, 'marketing', $6, $3, $4, $5)`,
             [adminId, privacyDocumentId, PRIVACY_NOTICE_VERSION, req.ip ?? null, req.get('user-agent') ?? null, marketingConsent === true]
         );
-        await writeAuditLog(req, {
+        await insertAuditLog(client, req, {
             adminId,
             action: 'ADMIN_ONBOARDING_STARTED',
             resourceType: 'admin',
             resourceId: adminId,
             details: { privacyVersion: PRIVACY_NOTICE_VERSION, termsAccepted: true, marketingConsent: marketingConsent === true },
         });
-        await writeAuditLog(req, {
+        await insertAuditLog(client, req, {
             adminId,
             action: 'PRIVACY_NOTICE_ACCEPTED',
             resourceType: 'privacy_notice',
             resourceId: PRIVACY_NOTICE_VERSION,
             details: { version: PRIVACY_NOTICE_VERSION, stage: 'onboarding' },
         });
-        await writeAuditLog(req, {
+        await insertAuditLog(client, req, {
             adminId,
             action: 'TERMS_ACCEPTED',
             resourceType: 'terms',
             resourceId: PRIVACY_NOTICE_VERSION,
             details: { version: PRIVACY_NOTICE_VERSION, stage: 'onboarding' },
         });
-        await writeAuditLog(req, {
+        await insertAuditLog(client, req, {
             adminId,
             action: 'ADMIN_ONBOARDING_COMPLETED',
             resourceType: 'admin',
@@ -353,7 +357,9 @@ export const completeAdminOnboarding = async (req: AuthRequest, res: Response): 
             id: String(result.rows[0].id),
             email: String(result.rows[0].email),
             nombre: String(result.rows[0].nombre),
+            sessionVersion: result.rows[0].session_version,
         };
+        await client.query('COMMIT');
         res.json({
             success: true,
             token: signToken(identity, 'access'),
@@ -361,8 +367,11 @@ export const completeAdminOnboarding = async (req: AuthRequest, res: Response): 
             message: 'Registro completado. Tu identidad fue validada con contraseña, OTP y reconocimiento facial.',
         });
     } catch (error) {
+        if (client) await client.query('ROLLBACK').catch(() => undefined);
         console.error('Error al completar la activación inicial:', error);
         res.status(500).json({ error: 'No fue posible activar la cuenta.' });
+    } finally {
+        client?.release();
     }
 };
 
@@ -518,7 +527,7 @@ export const loginStepOne = async (req: Request, res: Response): Promise<void> =
         const result = await pool.query(
             `SELECT id, nombre, email, password, face_template_encrypted, totp_secret_encrypted,
                     totp_enabled, mfa_facial_status, mfa_locked_until, account_status,
-                    first_login_required
+                    first_login_required, session_version
              FROM admins WHERE email = $1`,
             [email.trim().toLowerCase()]
         );
@@ -679,7 +688,7 @@ export const completeMfaSetup = async (req: AuthRequest, res: Response): Promise
              WHERE id = $1 AND mfa_nonce = $2 AND totp_enabled = FALSE
                AND mfa_setup_expires_at > NOW()
                AND (totp_last_used_step IS NULL OR totp_last_used_step < $5)
-             RETURNING id, nombre, email`,
+             RETURNING id, nombre, email, session_version`,
             [admin.id, setupJti, Boolean(faceEncrypted), faceEncrypted, verification.timeStep]
         );
         if (updated.rowCount !== 1) {

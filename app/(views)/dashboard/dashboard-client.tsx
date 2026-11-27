@@ -533,8 +533,8 @@ export default function DashboardClient() {
           {section === "overview" && <SummaryPanel activeCount={activeCount} vehicleCount={vehicles.length} events={events} gpsCount={gpsUnitCount} onFleet={() => go("fleet")} />}
           {section === "fleet" && <><FleetPanel vehicles={filtered} search={search} selectedId={selected?.id ?? ""} isLoading={isLoadingDrivers} onSearch={setSearch} onAdd={() => { setEditing(null); setModal("driver"); }} onSelect={selectDriver} onEdit={(vehicle) => { setEditing(vehicle); setModal("driver"); }} onDelete={(vehicle) => { setSelected(vehicle); setModal("delete"); }} />{selectedWithGps && <DriverWorkspace vehicle={selectedWithGps} gps={selectedGps} events={selectedEvents} hasActiveEvent={hasActiveEvent} tab={driverTab} setTab={setDriverTab} onToast={showToast} />}</>}
           {section === "admin" && <AdminSettings profile={adminProfile} isLoading={isLoadingAdminProfile} onRetry={loadAdminProfile} onPrivacy={() => go("privacy")} />}
-          {section === "privacy" && <PrivacyPanel onToast={showToast} />}
-          {section === "support" && <SupportPanel onToast={showToast} />}
+          {section === "privacy" && <PrivacyPanel onToast={showToast} onProfileUpdated={loadAdminProfile} />}
+          {section === "support" && <SupportPanel />}
         </div>
       </section>
 
@@ -613,21 +613,21 @@ function LegacySummaryPanel({ activeCount, vehicleCount, events, gpsCount, onFle
   </>;
 }
 
-function SupportPanel({ onToast }: { onToast: (message: string) => void }) {
-  const [supportOpen, setSupportOpen] = useState(false);
-  const supportEmail = process.env.NEXT_PUBLIC_SUPPORT_EMAIL ?? "sigil.ia.soporte@gmail.com";
+function SupportPanel() {
   return <>
     <section className={styles.supportPanel}>
       <div className={styles.panelHeader}>
-        <div><span className={styles.sectionLabel}>01 / CENTRO DE AYUDA</span><h2>Soporte técnico de Sigil.IA</h2><p>Obtén ayuda para la plataforma, los dispositivos ESP32 y la operación de tu flota.</p></div>
-        <span className={styles.supportStatus}>● Soporte disponible</span>
+        <div><h2>Soporte técnico de Sigilia</h2><p>Obtén ayuda para la plataforma, los dispositivos ESP32 y la operación de tu flota.</p></div>
       </div>
       <div className={styles.supportGrid}>
         <article className={styles.supportCard}><span>?</span><h3>Guía de operación</h3><p>Consulta cómo administrar conductores, alertas, GPS y registros históricos.</p><a className="supportAction" href="/manual-sigilia.pdf" download="manual-sigilia.pdf">Descargar manual PDF →</a></article>
-        <article className={styles.supportCard}><span>☎</span><h3>Contacto de soporte</h3><p>Canal para solicitar asistencia con la instalación o los sensores.</p><button onClick={() => setSupportOpen(true)}>Contactar soporte →</button></article>
+        <article className={styles.supportCard}>
+          <span>✉</span><h3>Contacto de soporte</h3>
+          <p>Solicita asistencia para la plataforma o tus dispositivos. Te responderemos al correo de tu cuenta.</p>
+          <Link className={styles.supportLink} href="/dashboard/soporte">Contactar soporte →</Link>
+        </article>
       </div>
     </section>
-    {supportOpen && <Modal title="Contactar soporte" onClose={() => setSupportOpen(false)}><div className={styles.callDialog}><span className={styles.contactAvatar}>?</span><h3>Soporte técnico de Sigil.IA</h3><p>{supportEmail}</p><small>Se abrirá tu aplicación de correo para solicitar asistencia.</small><a className={styles.primaryButton} href={`mailto:${supportEmail}?subject=Solicitud%20de%20soporte`}>Enviar correo</a></div></Modal>}
   </>;
 }
 
@@ -774,14 +774,22 @@ type PrivacyAuditEntry = {
   notice_version: string | null;
   created_at: string;
 };
-type RectificationStatus = {
-  id: string;
-  status: "pending" | "approved" | "rejected";
-  review_note: string | null;
-  created_at: string;
-  reviewed_at: string | null;
+type LegalConsentEntry = { id: string; action: string; accepted: boolean | null; version: string | null; created_at: string };
+const legalConsentLabels: Record<string, string> = {
+  ONBOARDING_LEGAL_CHECKED: "Casilla marcada durante la activación",
+  ONBOARDING_LEGAL_UNCHECKED: "Casilla desmarcada durante la activación",
+  PRIVACY_NOTICE_ACCEPTED: "Aviso de privacidad registrado",
+  TERMS_ACCEPTED: "Términos y condiciones registrados",
+  CONSENT_PRIVACY_NOTICE: "Aviso de privacidad",
+  CONSENT_TERMS: "Términos y condiciones",
 };
-
+const privacyActionLabels: Record<string, string> = {
+  ACCESS: "Acceso",
+  RECTIFICATION: "Rectificación",
+  CANCELLATION: "Cancelación",
+  CONSENT: "Consentimiento",
+  OPPOSITION: "Oposición",
+};
 function isPrivacyAccess(value: unknown): value is PrivacyAccess {
   if (typeof value !== "object" || value === null) return false;
   const record = value as Record<string, unknown>;
@@ -798,50 +806,64 @@ function isPrivacyAudit(value: unknown): value is { items: PrivacyAuditEntry[] }
   return Array.isArray(record.items);
 }
 
-function PrivacyPanel({ onToast }: { onToast: (message: string) => void }) {
+function PrivacyPanel({ onToast, onProfileUpdated }: { onToast: (message: string) => void; onProfileUpdated: () => Promise<void> }) {
   const [access, setAccess] = useState<PrivacyAccess | null>(null);
   const [audit, setAudit] = useState<PrivacyAuditEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [showLegalHistory, setShowLegalHistory] = useState(false);
+  const [legalLoading, setLegalLoading] = useState(false);
+  const [legalError, setLegalError] = useState("");
+  const [legalHistory, setLegalHistory] = useState<LegalConsentEntry[]>([]);
   const [saving, setSaving] = useState(false);
   const [confirmation, setConfirmation] = useState("");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
-  const [rectificationStatus, setRectificationStatus] = useState<RectificationStatus | null>(null);
 
   const loadPrivacy = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
-      const [accessResponse, auditResponse, statusResponse] = await Promise.all([
-        fetchWithAuth(`${API_URL}/api/privacy/access`),
-        fetchWithAuth(`${API_URL}/api/privacy/audit`),
-        fetchWithAuth(`${API_URL}/api/privacy/rectification/status`),
-      ]);
-      const [accessResult, auditResult, statusResult] = await Promise.all([
-        accessResponse.json(),
-        auditResponse.json(),
-        statusResponse.json(),
-      ]);
+      const accessResponse = await fetchWithAuth(`${API_URL}/api/privacy/access`);
+      const accessResult: unknown = await accessResponse.json();
       if (!accessResponse.ok) throw new Error(isApiError(accessResult) ? accessResult.error : "No fue posible consultar tus datos.");
+      if (!isPrivacyAccess(accessResult)) throw new Error("La API devolvió un formato no válido.");
+      const auditResponse = await fetchWithAuth(`${API_URL}/api/privacy/audit`);
+      const auditResult: unknown = await auditResponse.json();
       if (!auditResponse.ok) throw new Error(isApiError(auditResult) ? auditResult.error : "No fue posible consultar la bitácora.");
-      if (!statusResponse.ok) throw new Error(isApiError(statusResult) ? statusResult.error : "No fue posible consultar el estado de la rectificación.");
-      if (!isPrivacyAccess(accessResult) || !isPrivacyAudit(auditResult)) throw new Error("La API devolvió un formato no válido.");
+      if (!isPrivacyAudit(auditResult)) throw new Error("La API devolvió un formato no válido.");
       setAccess(accessResult);
       setAudit(auditResult.items);
-      setRectificationStatus(typeof statusResult === "object" && statusResult !== null && "request" in statusResult
-        ? (statusResult.request as RectificationStatus | null)
-        : null);
       setName(accessResult.identificacion.nombre_completo);
       setEmail(accessResult.contacto.correo_electronico);
       setPhone(accessResult.contacto.telefono ?? "");
     } catch (error) {
-      onToast(error instanceof Error ? error.message : "No se pudo cargar Mi privacidad.");
+      const message = error instanceof Error ? error.message : "No se pudo cargar Mi privacidad.";
+      setLoadError(message);
+      onToast(message);
     } finally {
       setLoading(false);
     }
   }, [onToast]);
 
   useEffect(() => { void loadPrivacy(); }, [loadPrivacy]);
+
+  const toggleLegalHistory = async () => {
+    if (showLegalHistory) { setShowLegalHistory(false); return; }
+    setShowLegalHistory(true);
+    setLegalLoading(true);
+    setLegalError("");
+    try {
+      const response = await fetchWithAuth(`${API_URL}/api/privacy/legal-history`, { cache: "no-store" });
+      const result: unknown = await response.json();
+      if (!response.ok) throw new Error(isApiError(result) ? result.error : "No fue posible consultar las aceptaciones.");
+      if (typeof result !== "object" || result === null || !("items" in result) || !Array.isArray(result.items)) throw new Error("La API devolvió un formato no válido.");
+      setLegalHistory(result.items as LegalConsentEntry[]);
+    } catch (error) {
+      setLegalError(error instanceof Error ? error.message : "No fue posible consultar las aceptaciones.");
+    } finally { setLegalLoading(false); }
+  };
 
   const rectify = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -854,18 +876,9 @@ function PrivacyPanel({ onToast }: { onToast: (message: string) => void }) {
       });
       const result: unknown = await response.json();
       if (!response.ok) throw new Error(isApiError(result) ? result.error : "No fue posible rectificar los datos.");
-      const rectificationResult = typeof result === "object" && result !== null
-        ? result as Record<string, unknown>
-        : {};
-      setRectificationStatus({
-        id: typeof rectificationResult.requestId === "string" ? rectificationResult.requestId : "",
-        status: "pending",
-        review_note: null,
-        created_at: new Date().toISOString(),
-        reviewed_at: null,
-      });
-      onToast(typeof rectificationResult.message === "string" ? rectificationResult.message : "Solicitud enviada a soporte.");
+      onToast("Tus datos se actualizaron correctamente.");
       await loadPrivacy();
+      await onProfileUpdated();
     } catch (error) {
       onToast(error instanceof Error ? error.message : "No se pudo rectificar los datos.");
     } finally {
@@ -886,11 +899,12 @@ function PrivacyPanel({ onToast }: { onToast: (message: string) => void }) {
         body: JSON.stringify({ confirmation }),
       });
       const result: unknown = await response.json();
-      if (!response.ok) throw new Error(isApiError(result) ? result.error : "No fue posible cancelar la cuenta.");
+      if (!response.ok) throw new Error(isApiError(result) ? result.error : "No fue posible reiniciar el perfil.");
       window.sessionStorage.removeItem("sigil_access_token");
+      window.sessionStorage.removeItem("sigil_onboarding_token");
       window.location.assign("/login");
     } catch (error) {
-      onToast(error instanceof Error ? error.message : "No se pudo cancelar la cuenta.");
+      onToast(error instanceof Error ? error.message : "No se pudo reiniciar el perfil.");
     } finally {
       setSaving(false);
     }
@@ -899,11 +913,12 @@ function PrivacyPanel({ onToast }: { onToast: (message: string) => void }) {
   return (
     <section className={styles.privacyPanel} id="privacy">
       <div className={styles.panelHeader}>
-        <div><span className={styles.sectionLabel}>01 / DERECHOS ARCO</span><h2>Mi privacidad</h2><p>Gestiona tus datos personales y consulta las acciones relacionadas con tu privacidad.</p></div>
+        <div><p>Gestiona tus datos personales y consulta las acciones relacionadas con tu privacidad.</p></div>
         <button className={styles.linkButton} type="button" onClick={() => void loadPrivacy()} disabled={loading}>{loading ? "Actualizando…" : "Actualizar"}</button>
       </div>
       {loading && <p role="status">Cargando tus datos personales…</p>}
-      {access && (
+      {loadError && <p role="alert">{loadError} Utiliza «Actualizar» para intentarlo de nuevo.</p>}
+      {access && !loadError && (
         <>
           <div className={styles.privacyGrid}>
             <article className={styles.privacyCard}>
@@ -924,25 +939,48 @@ function PrivacyPanel({ onToast }: { onToast: (message: string) => void }) {
               <label>Correo electrónico<input value={email} onChange={(event) => setEmail(event.target.value)} type="email" maxLength={254} required disabled={saving} /></label>
               <label>Teléfono<input value={phone} onChange={(event) => setPhone(event.target.value)} type="tel" maxLength={30} disabled={saving} /></label>
               <button className={styles.primaryButton} type="submit" disabled={saving}>{saving ? "Guardando…" : "Guardar cambios"}</button>
-              {rectificationStatus?.status === "pending" && <p className={styles.rectificationNotice} role="status">Los cambios se le han notificado a soporte, en espera de verificación.</p>}
-              {rectificationStatus?.status === "approved" && <p className={styles.rectificationApproved} role="status">Soporte autorizó los cambios. Tus datos personales fueron actualizados.</p>}
-              {rectificationStatus?.status === "rejected" && <p className={styles.rectificationRejected} role="status">Soporte rechazó la solicitud.{rectificationStatus.review_note ? ` ${rectificationStatus.review_note}` : ""}</p>}
             </form>
           </div>
           <article className={`${styles.privacyCard} ${styles.cancellationCard}`}>
-            <div><h3>Cancelar mi cuenta</h3><p>Esta acción dará de baja tu cuenta en el entorno de prueba. Después de confirmar, ya no podrás iniciar sesión.</p></div>
+            <div><h3>Eliminar mi perfil</h3><p>Se eliminarán tus conductores, eventos y los vehículos y registros GPS que no estén vinculados a otros conductores. Conservarás tu correo y contraseña actuales para iniciar sesión, configurar de nuevo Microsoft Authenticator y completar el registro.</p></div>
             <label>Escribe CONFIRMAR<input value={confirmation} onChange={(event) => setConfirmation(event.target.value)} placeholder="CONFIRMAR" disabled={saving} /></label>
-            <button className={styles.dangerButton} type="button" onClick={() => void cancelAccount()} disabled={saving}>Confirmar cancelación</button>
+            <button className={styles.dangerButton} type="button" onClick={() => void cancelAccount()} disabled={saving}>Eliminar perfil</button>
           </article>
         </>
       )}
-      <article className={`${styles.privacyCard} ${styles.privacyHistory}`}>
+      {!loading && !loadError && <article className={`${styles.privacyCard} ${styles.privacyHistory}`}>
         <h3>Historial de privacidad</h3>
-        {audit.length === 0 && <p>No hay acciones de privacidad registradas.</p>}
-        {audit.length > 0 && <div className={styles.privacyAuditTable}>
-          {audit.map((entry) => <div key={entry.id}><time>{new Date(entry.created_at).toLocaleString("es-MX")}</time><strong>{entry.action}</strong><span>{entry.result}</span></div>)}
+        <button className={styles.linkButton} type="button" aria-expanded={showLegalHistory} onClick={() => void toggleLegalHistory()}>{showLegalHistory ? "Ocultar aceptaciones" : "Ver registro de aceptaciones"}</button>
+        {showLegalHistory && <div className={styles.legalHistory}>
+          <h4>Aviso de privacidad y términos</h4>
+          {legalLoading && <p role="status">Consultando registros…</p>}
+          {legalError && <p role="alert">{legalError}</p>}
+          {!legalLoading && !legalError && <div className={styles.privacyAuditTable}><table aria-label="Registro de aceptaciones">
+            <thead><tr><th scope="col">Fecha y hora</th><th scope="col">Documento o acción</th><th scope="col">Decisión</th><th scope="col">Versión</th></tr></thead>
+            <tbody>{legalHistory.length === 0 ? <tr><td colSpan={4}>No hay aceptaciones asociadas a esta cuenta.</td></tr> : legalHistory.map((entry) => <tr key={entry.id}>
+              <td><time dateTime={entry.created_at}>{new Date(entry.created_at).toLocaleString("es-MX")}</time></td>
+              <td>{legalConsentLabels[entry.action] ?? entry.action}</td>
+              <td>{entry.accepted === true ? "Aceptado" : entry.accepted === false ? "No aceptado" : "Registrado"}</td>
+              <td>{entry.version ?? "No registrada"}</td>
+            </tr>)}</tbody>
+          </table></div>}
         </div>}
-      </article>
+        <div className={styles.privacyAuditTable}>
+          <table aria-label="Bitácora de privacidad">
+            <thead><tr><th scope="col">Fecha y hora</th><th scope="col">Administrador</th><th scope="col">Acción</th><th scope="col">Resultado / detalle mínimo</th></tr></thead>
+            <tbody>
+              {audit.length === 0 ? <tr><td colSpan={4}>No hay acciones de privacidad registradas.</td></tr> : audit.map((entry) => (
+                <tr key={entry.id}>
+                  <td><time dateTime={entry.created_at}>{new Date(entry.created_at).toLocaleString("es-MX")}</time></td>
+                  <td>{access ? `Admin-${String(access.cuenta.id).padStart(2, "0")}` : "—"}</td>
+                  <td>{privacyActionLabels[entry.action] ?? entry.action}</td>
+                  <td>{entry.result}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </article>}
     </section>
   );
 }

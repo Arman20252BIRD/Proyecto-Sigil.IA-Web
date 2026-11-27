@@ -12,6 +12,36 @@ export default function QuoteForm({ selectedPlan }: { selectedPlan?: string }) {
   const [sent, setSent] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
+  const [consentChecked, setConsentChecked] = useState(false);
+  const [consentSaving, setConsentSaving] = useState(false);
+  const [consentError, setConsentError] = useState("");
+  const [receipt, setReceipt] = useState<{ receiptId: string; recordedAt: string } | null>(null);
+  const [showReceipt, setShowReceipt] = useState(false);
+
+  async function changeConsent(checked: boolean) {
+    const previousReceipt = receipt;
+    setConsentChecked(checked);
+    setConsentSaving(true);
+    setConsentError("");
+    if (!checked) { setReceipt(null); setShowReceipt(false); }
+    try {
+      const response = await fetch(`${API_URL}/api/privacy/quote-legal`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ checked, ...(checked ? {} : { receiptId: previousReceipt?.receiptId }) }),
+      });
+      const result: unknown = await response.json();
+      if (!response.ok || typeof result !== "object" || result === null || !("receiptId" in result) || typeof result.receiptId !== "string" || !("recordedAt" in result) || typeof result.recordedAt !== "string") {
+        throw new Error("No fue posible registrar la decisión. Inténtalo nuevamente.");
+      }
+      if (checked) setReceipt({ receiptId: result.receiptId, recordedAt: result.recordedAt });
+    } catch (consentFailure) {
+      if (checked) { setConsentChecked(false); setReceipt(null); }
+      setConsentError(consentFailure instanceof Error ? consentFailure.message : "No fue posible registrar la decisión.");
+    } finally {
+      setConsentSaving(false);
+    }
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -25,12 +55,13 @@ export default function QuoteForm({ selectedPlan }: { selectedPlan?: string }) {
       const response = await fetch(`${API_URL}/api/cotizacion`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
+        body: JSON.stringify({ ...data, quoteConsentId: receipt?.receiptId }),
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error ?? "No fue posible enviar la solicitud.");
       setSent(true);
       form.reset();
+      setConsentChecked(false);
     } catch (submissionError) {
       setError(submissionError instanceof Error ? submissionError.message : "No fue posible enviar la solicitud.");
     } finally {
@@ -49,8 +80,14 @@ export default function QuoteForm({ selectedPlan }: { selectedPlan?: string }) {
         <label className={styles.field}><span>Vehículos aproximados</span><select name="fleet" defaultValue="1 a 5"><option>1 a 5</option><option>6 a 20</option><option>21 a 50</option><option>51 a 250</option><option>Más de 250</option></select></label>
         <label className={`${styles.field} ${styles.fieldFull}`}><span>Mensaje opcional</span><textarea name="message" placeholder="Cuéntanos brevemente qué necesitas monitorear." /></label>
       </div>
-      <label className={styles.consent}><input name="privacyAccepted" type="checkbox" required /><span>Acepto que Sigilia use estos datos para responder mi solicitud de cotización. Consulta el <Link href="/legal/privacidad" target="_blank">aviso de privacidad</Link>.</span></label>
-      <button className={styles.primary} type="submit" disabled={sending}>{sending ? "Enviando solicitud..." : "Enviar solicitud de cotización"}</button>
+      <label className={styles.consent}><input name="privacyAccepted" type="checkbox" required checked={consentChecked} disabled={consentSaving} onChange={(event) => void changeConsent(event.target.checked)} /><span>He leído y acepto el <Link href="/legal/privacidad" target="_blank">Aviso de privacidad</Link> y los <Link href="/legal/terminos" target="_blank">Términos y condiciones</Link> para enviar mi solicitud de cotización.</span></label>
+      {consentSaving && <p role="status">Registrando tu decisión…</p>}
+      {consentError && <p role="alert" className={styles.error}>{consentError}</p>}
+      {receipt && <div className={styles.consentReceipt}>
+        <button type="button" onClick={() => setShowReceipt(!showReceipt)} aria-expanded={showReceipt}>{showReceipt ? "Ocultar registro" : "Ver registro de aceptación"}</button>
+        {showReceipt && <p>Casilla marcada: {new Date(receipt.recordedAt).toLocaleString("es-MX")}. Aviso de privacidad y términos: versión 1.0. Folio: {receipt.receiptId}. Este registro corresponde a la casilla de esta solicitud y no confirma su envío.</p>}
+      </div>}
+      <button className={styles.primary} type="submit" disabled={sending || consentSaving || !consentChecked || !receipt}>{sending ? "Enviando solicitud..." : "Enviar solicitud de cotización"}</button>
       {sent && <p className={styles.success}>¡Solicitud enviada! Un asesor revisará tus datos y se pondrá en contacto contigo en menos de 24 horas.</p>}
       {error && <p role="alert" className={styles.error}>{error}</p>}
     </form>

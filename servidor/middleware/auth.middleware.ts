@@ -8,6 +8,7 @@ export interface AuthRequest extends Request {
     id: string;
     email: string;
     nombre: string;
+    sessionVersion: number;
     mfaJti?: string;
     enrollmentJti?: string;
     setupJti?: string;
@@ -42,6 +43,7 @@ function authenticate(purpose: TokenPurpose, req: AuthRequest, res: Response): b
       id: payload.sub,
       email: payload.email,
       nombre: payload.nombre,
+      sessionVersion: typeof payload.sessionVersion === 'number' ? payload.sessionVersion : 0,
       ...(purpose === 'mfa' ? { mfaJti: payload.jti as string } : {}),
       ...(purpose === 'enroll' ? { enrollmentJti: payload.jti as string } : {}),
       ...(purpose === 'setup' ? { setupJti: payload.jti as string } : {}),
@@ -56,12 +58,20 @@ function authenticate(purpose: TokenPurpose, req: AuthRequest, res: Response): b
 export const requireAuth = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   if (!authenticate('access', req, res)) return;
   try {
-    const result = await pool.query<{ account_status: string }>(
-      'SELECT account_status FROM admins WHERE id = $1',
+    const result = await pool.query<{ account_status: string; first_login_required: boolean; session_version: number }>(
+      'SELECT account_status, first_login_required, session_version FROM admins WHERE id = $1',
       [req.admin?.id]
     );
-    if (['cancelled', 'blocked'].includes(result.rows[0]?.account_status)) {
+    if (!result.rows[0]) {
+      res.status(401).json({ error: 'La cuenta ya no existe.' });
+      return;
+    }
+    if (['cancelled', 'blocked'].includes(result.rows[0].account_status)) {
       res.status(403).json({ error: 'Esta cuenta está bloqueada o fue dada de baja.' });
+      return;
+    }
+    if (result.rows[0].first_login_required || result.rows[0].session_version !== req.admin?.sessionVersion) {
+      res.status(401).json({ error: 'La sesión expiró. Inicia sesión nuevamente.' });
       return;
     }
   } catch {
@@ -83,6 +93,19 @@ export const requireMfaSetup = (req: AuthRequest, res: Response, next: NextFunct
   if (authenticate('setup', req, res)) next();
 };
 
-export const requireOnboardingSession = (req: AuthRequest, res: Response, next: NextFunction): void => {
-  if (authenticate('onboarding', req, res)) next();
+export const requireOnboardingSession = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  if (!authenticate('onboarding', req, res)) return;
+  try {
+    const result = await pool.query<{ session_version: number; first_login_required: boolean; account_status: string }>(
+      'SELECT session_version, first_login_required, account_status FROM admins WHERE id = $1', [req.admin?.id]
+    );
+    const account = result.rows[0];
+    if (!account || account.account_status !== 'active' || !account.first_login_required || account.session_version !== req.admin?.sessionVersion) {
+      res.status(401).json({ error: 'La activación expiró. Inicia sesión nuevamente.' });
+      return;
+    }
+    next();
+  } catch {
+    res.status(503).json({ error: 'No fue posible validar la activación.' });
+  }
 };

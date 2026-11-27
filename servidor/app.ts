@@ -33,8 +33,9 @@ import { createDriver, getDrivers, updateDriver, deleteDriver } from './controll
 import { getBestRoute, getEventsDashboard, getGpsTracking, ingestDeviceEvent } from './controllers/dashboard.controller';
 import { requireDeviceKey } from './middleware/device-auth.middleware';
 import { authorizeArcoWithGmail, gmailArcoCallback } from './controllers/gmail.controller';
-import { recordCookieDecision, recordPrivacyNoticeAcceptance } from './controllers/privacy.controller';
+import { recordCookieDecision, recordPrivacyNoticeAcceptance, recordQuoteLegalSelection, recordOnboardingLegalSelection, getLegalConsentHistory } from './controllers/privacy.controller';
 import { sendQuoteRequest } from './controllers/quote.controller';
+import { sendSupportRequest } from './controllers/support.controller';
 import {
     requireAuth,
     requireEnrollmentSession,
@@ -56,6 +57,20 @@ const authRateLimit = rateLimit({
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'Demasiados intentos de autenticación. Intenta de nuevo más tarde.' },
+});
+const supportRateLimit = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 5,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Demasiados mensajes de soporte. Intenta de nuevo más tarde.' },
+});
+const legalSelectionRateLimit = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 30,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Demasiados intentos. Intenta de nuevo más tarde.' },
 });
 
 const isDashboardRead = (req: Request): boolean =>
@@ -141,6 +156,8 @@ app.post('/api/auth/setup-mfa', authRateLimit, requireMfaSetup, completeMfaSetup
 app.post('/api/auth/verify-facial', authRateLimit, requireMfaSession, verifyFacialMfa);
 app.post('/api/auth/verify-totp', authRateLimit, requireMfaSession, verifyTotpMfa);
 app.post('/api/privacy/notice/accept', authRateLimit, recordPrivacyNoticeAcceptance);
+app.post('/api/privacy/quote-legal', legalSelectionRateLimit, recordQuoteLegalSelection);
+app.post('/api/privacy/onboarding-legal', legalSelectionRateLimit, requireOnboardingSession, recordOnboardingLegalSelection);
 app.post('/api/privacy/cookies/decision', recordCookieDecision);
 app.post('/api/cotizacion', sendQuoteRequest);
 
@@ -150,12 +167,14 @@ app.put('/api/admin', requireAuth, updateAdminProfile);
 app.get('/api/admin/me', requireAuth, getAdminProfile);
 app.put('/api/admin/me', requireAuth, updateAdminProfile);
 app.get('/api/admin/audit-logs', requireAuth, getAuditHistory);
+app.post('/api/support', requireAuth, supportRateLimit, sendSupportRequest);
 app.get('/api/privacy/access', requireAuth, getPrivacyAccess);
 app.patch('/api/privacy/rectification', requireAuth, rectifyPrivacyData);
 app.get('/api/privacy/rectification/status', requireAuth, getMyRectificationStatus);
 app.post('/api/privacy/rectification/review-by-email', reviewRectificationByEmail);
 app.post('/api/privacy/cancellation', requireAuth, cancelPrivacyAccount);
 app.get('/api/privacy/audit', requireAuth, getPrivacyAudit);
+app.get('/api/privacy/legal-history', requireAuth, getLegalConsentHistory);
 app.get('/api/admin/:id', requireAuth, getAdminProfile);
 app.put('/api/admin/:id', requireAuth, updateAdminProfile);
 

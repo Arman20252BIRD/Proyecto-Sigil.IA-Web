@@ -119,16 +119,74 @@ function parseAttachments(value: unknown): { attachments?: ArcoAttachment[]; err
         }
         const mimeType = rawMimeType;
         const dataBase64 = typeof file.dataBase64 === 'string' ? file.dataBase64 : '';
-        if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(dataBase64)) {
+        if (dataBase64.length > Math.ceil(MAX_ATTACHMENT_SIZE / 3) * 4 || dataBase64.length % 4 !== 0
+            || /[^A-Za-z0-9+/=]/.test(dataBase64) || /=/.test(dataBase64.slice(0, -2))
+            || !/^[^=]*(?:={0,2})$/.test(dataBase64.slice(-4))) {
             return { error: 'El contenido adjunto no es válido.' };
         }
-        const bytes = Math.floor(dataBase64.length * 0.75);
+        const bytes = Buffer.byteLength(dataBase64, 'base64');
         if (!filename || !dataBase64 || bytes > MAX_ATTACHMENT_SIZE) return { error: 'Cada archivo debe pesar como máximo 5 MB.' };
         total += bytes;
         if (total > MAX_TOTAL_ATTACHMENTS) return { error: 'El tamaño total de los archivos no puede superar 10 MB.' };
         attachments.push({ filename, mimeType, dataBase64 });
     }
     return { attachments };
+}
+
+export async function sendArcoRequest(req: Request, res: Response): Promise<void> {
+    const { nombre, contacto, solicitudText, solicitudHtml } = req.body ?? {};
+    const derechos = parseArcoRights(req.body?.derechos);
+    const parsedAttachments = parseAttachments(req.body?.attachments);
+    if (typeof nombre !== 'string' || nombre.trim().length < 2 || nombre.trim().length > 160
+        || !isEmail(contacto) || contacto.trim().length > 254 || derechos.length === 0
+        || typeof solicitudText !== 'string' || !solicitudText.trim() || solicitudText.length > 5000
+        || typeof solicitudHtml !== 'string' || solicitudHtml.length > 12000 || parsedAttachments.error) {
+        res.status(400).json({ error: parsedAttachments.error ?? 'Completa los datos de la solicitud ARCO.' });
+        return;
+    }
+
+    const apiKey = process.env.RESEND_SUPPORT_API_KEY?.trim() || process.env.RESEND_API_KEY?.trim();
+    const from = process.env.RESEND_SUPPORT_FROM?.trim() || process.env.RESEND_FROM?.trim();
+    if (!apiKey || !from) {
+        res.status(503).json({ error: 'El servicio de correo no está configurado. Contacta a soporte@sigilia.com.mx.' });
+        return;
+    }
+
+    const rights = derechos.map(rightLabel).join(', ');
+    const text = `Nombre completo: ${nombre.trim()}\nCorreo de contacto: ${contacto.trim()}\nDerechos solicitados: ${rights}\n\nDescripción de la solicitud:\n${solicitudText.trim()}`;
+    // Solo se conserva el formato del editor; no se aceptan atributos ni enlaces arbitrarios.
+    const formatted = solicitudHtml
+        .replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, '')
+        .replace(/<\/?([a-z][a-z0-9]*)\b[^>]*>/gi, (tag: string, name: string) => {
+            const normalized = name.toLowerCase();
+            if (normalized === 'div') return tag.startsWith('</') ? '</p>' : '<p>';
+            if (!['b', 'strong', 'i', 'em', 'u', 'br', 'ul', 'ol', 'li', 'p'].includes(normalized)) return '';
+            return `<${tag.startsWith('</') ? '/' : ''}${normalized}>`;
+        });
+    const html = `<p><strong>Nombre completo:</strong> ${escapeHtml(nombre.trim())}</p>`
+        + `<p><strong>Correo de contacto:</strong> ${escapeHtml(contacto.trim())}</p>`
+        + `<p><strong>Derechos solicitados:</strong> ${escapeHtml(rights)}</p>`
+        + `<p><strong>Descripción de la solicitud:</strong></p>${formatted}`;
+
+    try {
+        const response = await fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                from, to: ['soporte@sigilia.com.mx'], reply_to: contacto.trim(),
+                subject: `Solicitud de derechos ARCO - ${rights}`, text, html,
+                attachments: (parsedAttachments.attachments ?? []).map((file) => ({ filename: file.filename, content: file.dataBase64, content_type: file.mimeType })),
+            }),
+        });
+        if (!response.ok) {
+            console.error('El proveedor rechazó la solicitud ARCO:', response.status);
+            res.status(502).json({ error: 'No fue posible enviar la solicitud. Inténtalo nuevamente.' });
+            return;
+        }
+        res.status(201).json({ ok: true });
+    } catch {
+        res.status(502).json({ error: 'No fue posible conectar con el servicio de correo.' });
+    }
 }
 
 function redirectWithMessage(config: { frontendUrl: string }, res: Response, message: string): void {

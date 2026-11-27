@@ -32,7 +32,7 @@ import { getAuditHistory } from './controllers/audit.controller';
 import { createDriver, getDrivers, updateDriver, deleteDriver } from './controllers/driver.controller';
 import { getBestRoute, getEventsDashboard, getGpsTracking, ingestDeviceEvent } from './controllers/dashboard.controller';
 import { requireDeviceKey } from './middleware/device-auth.middleware';
-import { authorizeArcoWithGmail, gmailArcoCallback } from './controllers/gmail.controller';
+import { authorizeArcoWithGmail, gmailArcoCallback, sendArcoRequest } from './controllers/gmail.controller';
 import { recordCookieDecision, recordPrivacyNoticeAcceptance, recordQuoteLegalSelection, recordOnboardingLegalSelection, getLegalConsentHistory } from './controllers/privacy.controller';
 import { sendQuoteRequest } from './controllers/quote.controller';
 import { sendSupportRequest } from './controllers/support.controller';
@@ -190,6 +190,7 @@ app.get('/api/dashboard/events', requireAuth, getEventsDashboard);
 app.get('/api/dashboard/gps', requireAuth, getGpsTracking);
 app.post('/api/dashboard/route', requireAuth, getBestRoute);
 app.post('/api/telemetry/events', requireDeviceKey, ingestDeviceEvent);
+app.post('/api/privacy/arco', supportRateLimit, sendArcoRequest);
 app.post('/api/privacy/arco/gmail/authorize', authorizeArcoWithGmail);
 app.get('/api/privacy/arco/gmail/callback', gmailArcoCallback);
 

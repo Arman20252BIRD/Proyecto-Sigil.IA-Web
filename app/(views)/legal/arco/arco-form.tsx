@@ -20,6 +20,7 @@ export default function ArcoForm() {
   const [files, setFiles] = useState<File[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [sent, setSent] = useState(false);
 
   function format(command: string, event: MouseEvent<HTMLButtonElement>) {
     event.preventDefault();
@@ -37,6 +38,10 @@ export default function ArcoForm() {
       setError("Puedes adjuntar hasta cinco archivos.");
       return;
     }
+    if ([...files, ...selected].reduce((total, file) => total + file.size, 0) > 10 * 1024 * 1024) {
+      setError("El tamaño total de los archivos no puede superar 10 MB.");
+      return;
+    }
     setError("");
     setFiles((current) => [...current, ...selected]);
     event.target.value = "";
@@ -45,7 +50,9 @@ export default function ArcoForm() {
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
-    const formData = new FormData(event.currentTarget);
+    setSent(false);
+    const form = event.currentTarget;
+    const formData = new FormData(form);
     const derechos = formData.getAll("derechos").filter((value): value is string => typeof value === "string");
     const solicitudHtml = editorRef.current?.innerHTML ?? "";
     const solicitudText = editorRef.current?.innerText.trim() ?? "";
@@ -64,7 +71,7 @@ export default function ArcoForm() {
         mimeType: file.type || "application/octet-stream",
         dataBase64: await fileToBase64(file),
       })));
-      const response = await fetch(`${API_URL}/api/privacy/arco/gmail/authorize`, {
+      const response = await fetch(`${API_URL}/api/privacy/arco`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -76,12 +83,15 @@ export default function ArcoForm() {
           attachments,
         }),
       });
-      const result = await response.json() as { authorizationUrl?: string; error?: string };
-      if (!response.ok || !result.authorizationUrl) {
-        setError(result.error ?? "No fue posible iniciar la autorización de Gmail.");
+      const result = await response.json() as { ok?: boolean; error?: string };
+      if (!response.ok || !result.ok) {
+        setError(result.error ?? "No fue posible enviar la solicitud.");
         return;
       }
-      window.location.assign(result.authorizationUrl);
+      form.reset();
+      if (editorRef.current) editorRef.current.innerHTML = "";
+      setFiles([]);
+      setSent(true);
     } catch {
       setError("No fue posible conectar con el backend.");
     } finally {
@@ -114,6 +124,7 @@ export default function ArcoForm() {
     {files.length > 0 && <ul className={styles.fileList}>{files.map((file, index) => <li key={`${file.name}-${index}`}><span>{file.name}</span><button type="button" onClick={() => setFiles((current) => current.filter((_, fileIndex) => fileIndex !== index))}>Quitar</button></li>)}</ul>}
     <p className={styles.note}>Puedes adjuntar hasta cinco documentos, con un máximo de 5 MB por archivo y 10 MB en total.</p>
     {error && <p className={styles.error}>{error}</p>}
+    {sent && <p role="status">Tu solicitud fue enviada a soporte. Te responderemos al correo proporcionado.</p>}
     <button type="submit" disabled={isSubmitting}>{isSubmitting ? "Enviando solicitud…" : "Enviar solicitud"}</button>
   </form>;
 }
